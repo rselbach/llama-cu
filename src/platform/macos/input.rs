@@ -16,6 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::error::{Error, ErrorCode, Result};
 use crate::keys::{Key, KeyCombo, NamedKey};
 use crate::model::{MouseButton, Point};
+use crate::platform::InputTarget;
 
 /// Pause that lets the target app process one event before the next.
 const EVENT_GAP: Duration = Duration::from_millis(10);
@@ -38,7 +39,7 @@ const KEY_CONTROL: CGKeyCode = 0x3B;
 const KEY_FUNCTION: CGKeyCode = 0x3F;
 
 /// Clicks `count` times at a screen point.
-pub fn click(at: Point, button: MouseButton, count: u32) -> Result<()> {
+pub fn click(target: InputTarget, at: Point, button: MouseButton, count: u32) -> Result<()> {
     let (down, up, cg_button) = match button {
         MouseButton::Left => (
             CGEventType::LeftMouseDown,
@@ -56,17 +57,17 @@ pub fn click(at: Point, button: MouseButton, count: u32) -> Result<()> {
             CGMouseButton::Center,
         ),
     };
-    move_to(at)?;
+    move_to(target, at)?;
     thread::sleep(HOVER_GAP);
     for n in 1..=count {
         for kind in [down, up] {
-            let event = mouse_event(kind, at, cg_button)?;
+            let event = mouse_event(target, kind, at, cg_button)?;
             CGEvent::set_integer_value_field(
                 Some(&event),
                 CGEventField::MouseEventClickState,
                 i64::from(n),
             );
-            post(&event);
+            post(target, &event);
             thread::sleep(EVENT_GAP);
         }
     }
@@ -74,14 +75,19 @@ pub fn click(at: Point, button: MouseButton, count: u32) -> Result<()> {
 }
 
 /// Drags with the left button between two screen points.
-pub fn drag(from: Point, to: Point) -> Result<()> {
-    move_to(from)?;
+pub fn drag(target: InputTarget, from: Point, to: Point) -> Result<()> {
+    validate_point(target, to)?;
+    move_to(target, from)?;
     thread::sleep(HOVER_GAP);
-    post(&*mouse_event(
-        CGEventType::LeftMouseDown,
-        from,
-        CGMouseButton::Left,
-    )?);
+    post(
+        target,
+        &*mouse_event(
+            target,
+            CGEventType::LeftMouseDown,
+            from,
+            CGMouseButton::Left,
+        )?,
+    );
     thread::sleep(HOVER_GAP);
     for step in 1..=DRAG_STEPS {
         let t = f64::from(step) / f64::from(DRAG_STEPS);
@@ -89,26 +95,29 @@ pub fn drag(from: Point, to: Point) -> Result<()> {
             x: from.x + (to.x - from.x) * t,
             y: from.y + (to.y - from.y) * t,
         };
-        post(&*mouse_event(
-            CGEventType::LeftMouseDragged,
-            p,
-            CGMouseButton::Left,
-        )?);
+        post(
+            target,
+            &*mouse_event(
+                target,
+                CGEventType::LeftMouseDragged,
+                p,
+                CGMouseButton::Left,
+            )?,
+        );
         thread::sleep(EVENT_GAP);
     }
     thread::sleep(HOVER_GAP);
-    post(&*mouse_event(
-        CGEventType::LeftMouseUp,
-        to,
-        CGMouseButton::Left,
-    )?);
+    post(
+        target,
+        &*mouse_event(target, CGEventType::LeftMouseUp, to, CGMouseButton::Left)?,
+    );
     Ok(())
 }
 
 /// Scrolls by whole lines at a screen point. Positive `dy` scrolls down and
 /// positive `dx` scrolls right.
-pub fn scroll(at: Point, dx: i32, dy: i32) -> Result<()> {
-    move_to(at)?;
+pub fn scroll(target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()> {
+    move_to(target, at)?;
     thread::sleep(HOVER_GAP);
     // Wheel deltas count positive toward the top and left of the content,
     // but the system flips synthetic wheel events too when natural
@@ -136,14 +145,18 @@ pub fn scroll(at: Point, dx: i32, dy: i32) -> Result<()> {
         )
         .ok_or_else(event_failed)?;
         CGEvent::set_location(Some(&event), cg_point(at));
-        post(&event);
+        if let InputTarget::Background { window, frame, .. } = target {
+            CGEvent::set_flags(Some(&event), CGEventFlags::empty());
+            super::background::stamp_location(window, frame, at, &event)?;
+        }
+        post(target, &event);
         thread::sleep(EVENT_GAP);
     }
     Ok(())
 }
 
 /// Presses a key combo, holding modifier keys the way a keyboard would.
-pub fn press_key(combo: &KeyCombo) -> Result<()> {
+pub fn press_key(target: InputTarget, combo: &KeyCombo) -> Result<()> {
     let (key, key_flags) = match combo.key {
         Some(key) => {
             let (code, flags) = key_code(key)?;
@@ -169,25 +182,25 @@ pub fn press_key(combo: &KeyCombo) -> Result<()> {
     let mut flags = CGEventFlags::empty();
     for &(code, flag) in &held {
         flags |= flag;
-        post_key(code, true, flags)?;
+        post_key(target, code, true, flags)?;
     }
     if let Some(code) = key {
         let key_flags = flags | (key_flags - CGEventFlags::MaskShift);
-        post_key(code, true, key_flags)?;
-        post_key(code, false, key_flags)?;
+        post_key(target, code, true, key_flags)?;
+        post_key(target, code, false, key_flags)?;
     }
     for &(code, flag) in held.iter().rev() {
         flags -= flag;
-        post_key(code, false, flags)?;
+        post_key(target, code, false, flags)?;
     }
     Ok(())
 }
 
 /// Types text as Unicode key events. Newlines and tabs press Return and Tab.
-pub fn type_text(text: &str) -> Result<()> {
+pub fn type_text(target: InputTarget, text: &str) -> Result<()> {
     for typed in typing_events(text) {
         match typed {
-            Typed::Key(code) => tap(code)?,
+            Typed::Key(code) => tap(target, code)?,
             Typed::Text(units) => {
                 for down in [true, false] {
                     let event =
@@ -200,7 +213,7 @@ pub fn type_text(text: &str) -> Result<()> {
                             units.as_ptr(),
                         );
                     }
-                    post(&event);
+                    post(target, &event);
                 }
             }
         }
@@ -251,38 +264,68 @@ fn natural_scrolling() -> bool {
     defaults.objectForKey(&key).is_none() || defaults.boolForKey(&key)
 }
 
-fn tap(code: CGKeyCode) -> Result<()> {
-    post_key(code, true, CGEventFlags::empty())?;
-    post_key(code, false, CGEventFlags::empty())
+fn tap(target: InputTarget, code: CGKeyCode) -> Result<()> {
+    post_key(target, code, true, CGEventFlags::empty())?;
+    post_key(target, code, false, CGEventFlags::empty())
 }
 
-fn post_key(code: CGKeyCode, down: bool, flags: CGEventFlags) -> Result<()> {
+fn post_key(target: InputTarget, code: CGKeyCode, down: bool, flags: CGEventFlags) -> Result<()> {
     let event = CGEvent::new_keyboard_event(None, code, down).ok_or_else(event_failed)?;
     CGEvent::set_flags(Some(&event), flags);
-    post(&event);
+    post(target, &event);
     thread::sleep(EVENT_GAP);
     Ok(())
 }
 
-fn move_to(at: Point) -> Result<()> {
-    post(&*mouse_event(
-        CGEventType::MouseMoved,
-        at,
-        CGMouseButton::Left,
-    )?);
+fn move_to(target: InputTarget, at: Point) -> Result<()> {
+    post(
+        target,
+        &*mouse_event(target, CGEventType::MouseMoved, at, CGMouseButton::Left)?,
+    );
     Ok(())
 }
 
 fn mouse_event(
+    target: InputTarget,
     kind: CGEventType,
     at: Point,
     button: CGMouseButton,
 ) -> Result<objc2_core_foundation::CFRetained<CGEvent>> {
-    CGEvent::new_mouse_event(None, kind, cg_point(at), button).ok_or_else(event_failed)
+    validate_point(target, at)?;
+    match target {
+        InputTarget::Foreground => {
+            CGEvent::new_mouse_event(None, kind, cg_point(at), button).ok_or_else(event_failed)
+        }
+        InputTarget::Background { window, frame, .. } => {
+            super::background::mouse_event(window, frame, kind, at, button)
+        }
+    }
 }
 
-fn post(event: &CGEvent) {
-    CGEvent::post(CGEventTapLocation::HIDEventTap, Some(event));
+/// Reject points outside the addressed window rather than route to a menu or
+/// another window in the same process accidentally.
+fn validate_point(target: InputTarget, at: Point) -> Result<()> {
+    if let InputTarget::Background { frame, .. } = target
+        && (!at.x.is_finite()
+            || !at.y.is_finite()
+            || at.x < frame.x
+            || at.y < frame.y
+            || at.x >= frame.x + frame.width
+            || at.y >= frame.y + frame.height)
+    {
+        return Err(Error::new(
+            ErrorCode::BackgroundUnavailable,
+            "background pointer input must be inside the selected window",
+        ));
+    }
+    Ok(())
+}
+
+fn post(target: InputTarget, event: &CGEvent) {
+    match target {
+        InputTarget::Foreground => CGEvent::post(CGEventTapLocation::HIDEventTap, Some(event)),
+        InputTarget::Background { pid, .. } => CGEvent::post_to_pid(pid, Some(event)),
+    }
 }
 
 fn cg_point(p: Point) -> CGPoint {
@@ -453,6 +496,81 @@ fn layout_key(c: char) -> Option<(CGKeyCode, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_points_stay_inside_the_addressed_window() {
+        let target = InputTarget::Background {
+            pid: 1,
+            window: 1,
+            frame: crate::model::Rect {
+                x: -500.0,
+                y: 200.0,
+                width: 300.0,
+                height: 400.0,
+            },
+        };
+        let cases = [
+            (
+                Point {
+                    x: -500.0,
+                    y: 200.0,
+                },
+                true,
+            ),
+            (
+                Point {
+                    x: -200.1,
+                    y: 599.9,
+                },
+                true,
+            ),
+            (
+                Point {
+                    x: -200.0,
+                    y: 300.0,
+                },
+                false,
+            ),
+            (
+                Point {
+                    x: -300.0,
+                    y: 600.0,
+                },
+                false,
+            ),
+            (
+                Point {
+                    x: -501.0,
+                    y: 300.0,
+                },
+                false,
+            ),
+            (
+                Point {
+                    x: -300.0,
+                    y: 199.0,
+                },
+                false,
+            ),
+            (
+                Point {
+                    x: f64::NAN,
+                    y: 300.0,
+                },
+                false,
+            ),
+            (
+                Point {
+                    x: -300.0,
+                    y: f64::INFINITY,
+                },
+                false,
+            ),
+        ];
+        for (point, want) in cases {
+            assert_eq!(validate_point(target, point).is_ok(), want, "{point:?}");
+        }
+    }
 
     #[test]
     fn ansi_lookup() {

@@ -86,7 +86,7 @@ pub fn frontmost_pid() -> Option<i32> {
 }
 
 /// Launches an app and waits until it accepts accessibility requests.
-pub fn launch(app: &AppInfo) -> Result<i32> {
+pub fn launch(app: &AppInfo, background: bool) -> Result<i32> {
     let workspace = NSWorkspace::sharedWorkspace();
     let url = match (&app.path, &app.bundle_id) {
         (Some(path), _) => NSURL::fileURLWithPath(&NSString::from_str(path)),
@@ -118,7 +118,7 @@ pub fn launch(app: &AppInfo) -> Result<i32> {
         },
     );
     let config = NSWorkspaceOpenConfiguration::configuration();
-    config.setActivates(true);
+    config.setActivates(!background);
     workspace.openApplicationAtURL_configuration_completionHandler(&url, &config, Some(&handler));
 
     let pid = match rx.recv_timeout(LAUNCH_TIMEOUT) {

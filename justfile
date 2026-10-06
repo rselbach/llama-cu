@@ -8,6 +8,11 @@ build:
 test:
     cargo test
 
+# Exercise background input in a temporary native app (requires permissions).
+check-background:
+    cargo build
+    python3 scripts/check-background.py
+
 # Lint with clippy, treating warnings as errors.
 lint:
     cargo clippy --all-targets -- -D warnings

@@ -11,7 +11,17 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::keys::KeyCombo;
-use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Snapshot, SnapshotOptions, WindowInfo};
+use crate::model::{
+    AppInfo, MouseButton, NodeInfo, Point, Rect, Snapshot, SnapshotOptions, WindowInfo,
+};
+
+/// Where synthetic input is delivered. Background input must never fall back
+/// to the global event stream or activate the application.
+#[derive(Debug, Clone, Copy)]
+pub enum InputTarget {
+    Foreground,
+    Background { pid: i32, window: u64, frame: Rect },
+}
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -60,8 +70,9 @@ pub trait Platform {
     /// Describes the app bundle or executable at `path`.
     fn app_at_path(&self, path: &Path) -> Result<AppInfo>;
     /// Launches the app and waits until it accepts accessibility requests.
+    /// Requests no activation when `background` is true.
     /// Returns its process ID.
-    fn launch(&self, app: &AppInfo) -> Result<i32>;
+    fn launch(&self, app: &AppInfo, background: bool) -> Result<i32>;
     /// Reports whether `pid` is a running app.
     fn is_running(&self, pid: i32) -> bool;
     /// Returns the process ID of the app in front, if any.
@@ -96,16 +107,16 @@ pub trait Platform {
     fn capture_window(&self, pid: i32, window: u64, path: &Path, scale: f64) -> Result<(u32, u32)>;
 
     /// Clicks `count` times at a screen point.
-    fn click(&self, at: Point, button: MouseButton, count: u32) -> Result<()>;
+    fn click(&self, target: InputTarget, at: Point, button: MouseButton, count: u32) -> Result<()>;
     /// Drags with the left button between two screen points.
-    fn drag(&self, from: Point, to: Point) -> Result<()>;
+    fn drag(&self, target: InputTarget, from: Point, to: Point) -> Result<()>;
     /// Scrolls at a screen point by whole lines. Positive `dy` scrolls down
     /// and positive `dx` scrolls right.
-    fn scroll(&self, at: Point, dx: i32, dy: i32) -> Result<()>;
+    fn scroll(&self, target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()>;
     /// Presses and releases a key combo.
-    fn press_key(&self, combo: &KeyCombo) -> Result<()>;
+    fn press_key(&self, target: InputTarget, combo: &KeyCombo) -> Result<()>;
     /// Types text into the focused control.
-    fn type_text(&self, text: &str) -> Result<()>;
+    fn type_text(&self, target: InputTarget, text: &str) -> Result<()>;
 
     /// Saves the clipboard contents.
     fn clipboard_save(&self) -> Result<Self::Clipboard>;

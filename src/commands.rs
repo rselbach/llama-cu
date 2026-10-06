@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::error::{Error, ErrorCode, Result};
 use crate::keys::KeyCombo;
 use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Rect, SnapshotOptions, WindowInfo};
-use crate::platform::{Permissions, Platform};
+use crate::platform::{InputTarget, Permissions, Platform};
 use crate::render::TextLimit;
 use crate::session::{ElementRef, Fingerprint, Session, SnapshotRefs, Store};
 use crate::text;
@@ -196,16 +196,18 @@ pub struct Ctx<P: Platform> {
     platform: P,
     store: Store,
     session: Session,
+    background: bool,
 }
 
 impl<P: Platform> Ctx<P> {
     /// Loads the session from `store`.
-    pub fn new(platform: P, store: Store) -> Result<Self> {
+    pub fn new(platform: P, store: Store, background: bool) -> Result<Self> {
         let session = store.load()?;
         Ok(Self {
             platform,
             store,
             session,
+            background,
         })
     }
 
@@ -268,7 +270,7 @@ impl<P: Platform> Ctx<P> {
             ));
         }
         if app.pid.is_none() {
-            let pid = self.platform.launch(&app)?;
+            let pid = self.platform.launch(&app, self.background)?;
             if !self.platform.is_running(pid) {
                 return Err(Error::new(
                     ErrorCode::AppNotRunning,
@@ -454,8 +456,8 @@ impl<P: Platform> Ctx<P> {
                 )
             }
         };
-        self.platform.activate(pid, window)?;
-        self.platform.click(point, button, count)?;
+        let target = self.input_target(pid, window)?;
+        self.platform.click(target, point, button, count)?;
         let clicks = match count {
             1 => String::new(),
             n => format!(" x{n}"),
@@ -471,9 +473,12 @@ impl<P: Platform> Ctx<P> {
     /// Drags between two window-relative points.
     pub fn drag(&mut self, from: Point, to: Point) -> Result<Action> {
         let (pid, window) = self.coordinate_window()?;
-        self.platform.activate(pid, Some(window.id))?;
-        self.platform
-            .drag(self.to_screen(&window, from), self.to_screen(&window, to))?;
+        let target = self.input_target(pid, Some(window.id))?;
+        self.platform.drag(
+            target,
+            self.to_screen(&window, from),
+            self.to_screen(&window, to),
+        )?;
         Ok(action(format!(
             "dragged from {},{} to {},{}",
             from.x, from.y, to.x, to.y
@@ -510,8 +515,8 @@ impl<P: Platform> Ctx<P> {
             Direction::Left => (-n, 0),
             Direction::Right => (n, 0),
         };
-        self.platform.activate(pid, window)?;
-        self.platform.scroll(point, dx, dy)?;
+        let target = self.input_target(pid, window)?;
+        self.platform.scroll(target, point, dx, dy)?;
         Ok(action(
             format!("scrolled {direction:?} {amount}").to_lowercase(),
         ))
@@ -523,10 +528,16 @@ impl<P: Platform> Ctx<P> {
             .iter()
             .map(|k| KeyCombo::parse(k))
             .collect::<Result<Vec<_>>>()?;
+        if self.background && combos.iter().any(|combo| combo.modifiers.command) {
+            return Err(Error::new(
+                ErrorCode::BackgroundUnavailable,
+                "Command shortcuts are unsupported in background mode; use accessibility actions, select-text, or set-value",
+            ));
+        }
         let pid = pid_of(&self.app()?);
-        self.platform.activate(pid, self.session.window)?;
+        let target = self.input_target(pid, self.session.window)?;
         for combo in &combos {
-            self.platform.press_key(combo)?;
+            self.platform.press_key(target, combo)?;
         }
         Ok(action(format!("pressed {}", keys.join(" "))))
     }
@@ -534,13 +545,19 @@ impl<P: Platform> Ctx<P> {
     /// Types text into the focused control.
     pub fn type_text(&mut self, text: &str) -> Result<Action> {
         let pid = pid_of(&self.app()?);
-        self.platform.activate(pid, self.session.window)?;
-        self.platform.type_text(text)?;
+        let target = self.input_target(pid, self.session.window)?;
+        self.platform.type_text(target, text)?;
         Ok(action(format!("typed {} characters", text.chars().count())))
     }
 
     /// Pastes text through the clipboard, then restores the clipboard.
     pub fn paste(&mut self, content: &str, format: PasteFormat) -> Result<Action> {
+        if self.background {
+            return Err(Error::new(
+                ErrorCode::BackgroundUnavailable,
+                "paste uses the shared clipboard; use type-text or set-value in background mode",
+            ));
+        }
         let (plain, html) = match format {
             PasteFormat::Plain => (content.to_string(), None),
             PasteFormat::Markdown => (content.to_string(), Some(text::markdown_to_html(content))),
@@ -553,7 +570,10 @@ impl<P: Platform> Ctx<P> {
         let pasted = self
             .platform
             .clipboard_set(&plain, html.as_deref())
-            .and_then(|()| self.platform.press_key(&self.platform.paste_shortcut()));
+            .and_then(|()| {
+                self.platform
+                    .press_key(InputTarget::Foreground, &self.platform.paste_shortcut())
+            });
         thread::sleep(PASTE_SETTLE);
         let restored = self.platform.clipboard_restore(saved);
         pasted?;
@@ -615,6 +635,12 @@ impl<P: Platform> Ctx<P> {
 
     /// Invokes a named accessibility action on an element.
     pub fn perform_secondary_action(&mut self, id: usize, name: &str) -> Result<Action> {
+        if self.background && name.eq_ignore_ascii_case("raise") {
+            return Err(Error::new(
+                ErrorCode::BackgroundUnavailable,
+                "raising a window is unavailable in background mode",
+            ));
+        }
         let (_, element, info) = self.element(id)?;
         self.platform.perform_action(&element, name)?;
         Ok(action(format!(
@@ -661,8 +687,43 @@ impl<P: Platform> Ctx<P> {
         let app = self.app()?;
         let pid = pid_of(&app);
         let windows = self.platform.windows(pid)?;
-        let window = pick_window(&windows, None, self.session.window, &app)?;
+        if self.background && self.session.window.is_none() {
+            return Err(background_window_required());
+        }
+        let requested = self.background.then_some(self.session.window).flatten();
+        let window = pick_window(&windows, requested, self.session.window, &app)?;
         Ok((pid, window))
+    }
+
+    /// Resolves an exact background window, or prepares foreground delivery.
+    fn input_target(&self, pid: i32, window: Option<u64>) -> Result<InputTarget> {
+        if !self.background {
+            self.platform.activate(pid, window)?;
+            return Ok(InputTarget::Foreground);
+        }
+        let window = window.ok_or_else(background_window_required)?;
+        let info = self
+            .platform
+            .windows(pid)?
+            .into_iter()
+            .find(|w| w.id == window)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::WindowNotFound,
+                    format!("window {window} is no longer available"),
+                )
+            })?;
+        if info.minimized {
+            return Err(Error::new(
+                ErrorCode::BackgroundUnavailable,
+                "background input to minimized windows is unsupported",
+            ));
+        }
+        Ok(InputTarget::Background {
+            pid,
+            window,
+            frame: info.frame,
+        })
     }
 
     /// Converts a point in screenshot pixels of `window` to the screen. The
@@ -889,6 +950,13 @@ fn same_app(a: &AppInfo, b: &AppInfo) -> bool {
 
 fn pid_of(app: &AppInfo) -> i32 {
     app.pid.expect("running app has a pid")
+}
+
+fn background_window_required() -> Error {
+    Error::new(
+        ErrorCode::BackgroundUnavailable,
+        "background input needs a window; run get-ax-state or get-screenshot first",
+    )
 }
 
 fn action(message: String) -> Action {

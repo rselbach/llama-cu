@@ -101,6 +101,54 @@ acting, `llama-cu` follows the path again and checks the fingerprint. If the
 element changed, the command fails with `stale_element` and does not act on
 the wrong element.
 
+### Experimental background input
+
+Use `--background` on each command, or set `LLAMA_CU_BACKGROUND=true` for
+the agent's environment:
+
+```sh
+export LLAMA_CU_BACKGROUND=true
+llama-cu get-app TextEdit
+llama-cu get-ax-state-and-screenshot
+llama-cu click --element 14
+llama-cu type-text "Greendale Community College"
+```
+
+This mode sends input directly to the selected process and window, without
+explicitly activating the app, raising its window, or moving the real
+pointer. It keeps accessibility actions as the first choice. There is no
+visible agent cursor overlay yet. The default foreground mode is unchanged.
+
+Background delivery is experimental and app-dependent. Observe after each
+action: posting an event successfully does not prove the app handled it.
+An app can also activate itself in response to an action. In particular,
+browser/Electron content and games need further testing.
+
+- Observe the intended window first. Background keyboard events require it
+  to be the app's focused window; otherwise they fail with
+  `background_unavailable`. This is focus *within the target app*, separate
+  from which app is frontmost.
+- Pointer input is limited to the selected, non-minimized window. Menus and
+  popovers outside it, other Spaces, and simultaneous work in the same app
+  are not supported by this prototype. A missing selected window fails
+  instead of redirecting input to another window.
+- `paste` and the `raise` action fail in background mode. Use `type-text` or
+  `set-value` to avoid replacing the shared clipboard. Other app actions
+  such as a Copy menu action can still change the clipboard.
+- Command shortcuts are rejected: native apps can silently ignore them
+  while inactive. Use accessibility actions on menu items, `select-text`,
+  or `set-value` instead. Plain keys and Shift combinations use the app's
+  existing keyboard focus.
+- There is no automatic fallback to foreground input. To use the original
+  behavior, omit the flag and unset `LLAMA_CU_BACKGROUND`.
+
+Mouse delivery uses `CGEventPostToPid`, AppKit event construction, window
+metadata, and the private `CGEventSetWindowLocation` function. If that
+function is missing, pointer input fails with `background_unavailable`.
+This mechanism needs live regression testing when macOS changes. The
+[axcli implementation](https://github.com/andelf/axcli/blob/main/src/input.rs)
+is a useful reference for the event metadata.
+
 ### Coordinates
 
 Coordinates in `--at`, `--from`, and `--to`, and frames in the tree, are
@@ -153,13 +201,22 @@ To add a platform, implement `Platform` in `platform/<os>/` and select it in
 ## Development
 
 ```sh
-just check   # format check, clippy, tests
-just build   # release build
+just check             # format check, clippy, tests
+just build             # release build
+just check-background  # live background-input check against a disposable app
 ```
 
 Tests cover the platform-neutral logic and macOS key mapping. Accessibility,
 capture, and input need the permissions above, so test them by hand against
 a real app.
+
+`just check-background` needs Python 3, Xcode command-line tools, and the
+same Accessibility permission as `cargo run`. It builds a temporary AppKit
+app and exercises actual input delivery while
+sampling the real pointer and foreground app. Keep the pointer still and
+avoid switching apps during this short check; human input also triggers
+its interference assertions. The check quits the fixture and removes its
+temporary app and session on exit.
 
 ## Known limitations
 

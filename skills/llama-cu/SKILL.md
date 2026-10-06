@@ -41,6 +41,29 @@ from the tree. Coordinates are window-relative screenshot pixels, the same
 as the frames in the tree. Large windows are captured scaled down, and the
 tree header says so; coordinates still match the screenshot.
 
+## Experimental background mode
+
+When asked to work without taking over the user's pointer, set
+`LLAMA_CU_BACKGROUND=true` for every llama-cu invocation, or pass
+`--background` on every command. This mode avoids explicit activation,
+window raising, and global input posting. There is no agent cursor overlay
+yet. Always observe the result: apps can ignore background events or bring
+themselves forward in response to an action.
+
+Observe the intended window before sending input. Keyboard events require
+that window to have focus within the selected app. Pointer coordinates
+must stay inside the selected non-minimized window. Menus outside it,
+other Spaces, and simultaneous use of the same app are unsupported.
+Browser/Electron content needs further compatibility testing. Command
+shortcuts are rejected because inactive apps can silently ignore them; use
+accessibility actions on menu items, `select-text`, or `set-value` instead.
+
+`paste` and `perform-secondary-action raise` return
+`background_unavailable`; use `type-text` or `set-value` for text.
+Background delivery never falls back to moving the real pointer. If an
+action fails or is ignored, report the limitation rather than silently
+retrying without background mode.
+
 ## Reading the tree
 
 ```
@@ -90,8 +113,8 @@ Every command from `click` to `perform-secondary-action` accepts `--observe`.
 
 - A plain left `click --element` uses the element's press action, and a
   double-click (`--count 2`) uses its open action, so both work even when
-  the window is covered. Other clicks move the real pointer and bring the
-  app to the front first.
+  the window is covered. In the default foreground mode, other clicks move
+  the real pointer and bring the app to the front first.
 - Text entry: use `type-text` for short text. Use `paste` for long text or
   formatted text (`--format markdown` or `--format html`). Use `set-value` to
   replace a field outright. Some apps do not notice `set-value`; if the app

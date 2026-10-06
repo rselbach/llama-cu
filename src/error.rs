@@ -16,6 +16,7 @@ pub enum ErrorCode {
     ElementNotFound,
     StaleElement,
     Unsupported,
+    BackgroundUnavailable,
     Timeout,
     Platform,
     Io,

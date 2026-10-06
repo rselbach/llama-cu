@@ -3,6 +3,7 @@
 
 mod apps;
 mod ax;
+mod background;
 mod capture;
 mod clipboard;
 mod input;
@@ -19,7 +20,7 @@ use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCapture
 
 pub use responsibility::become_responsible;
 
-use super::{Permissions, Platform};
+use super::{InputTarget, Permissions, Platform};
 use crate::error::{Error, ErrorCode, Result};
 use crate::keys::{Key, KeyCombo, Modifiers};
 use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Snapshot, SnapshotOptions, WindowInfo};
@@ -46,6 +47,20 @@ fn require_accessibility() -> Result<()> {
         ErrorCode::PermissionDenied,
         "accessibility permission is missing; run `llama-cu doctor`",
     ))
+}
+
+/// PID-directed keys follow the app's focused window, not mouse window tags.
+fn require_keyboard_target(target: InputTarget) -> Result<()> {
+    if let InputTarget::Background { pid, window, .. } = target {
+        let focused = ax::element_attribute(&ax::application(pid), "AXFocusedWindow")?;
+        if focused.as_deref().and_then(ax::window_id) != Some(window) {
+            return Err(Error::new(
+                ErrorCode::BackgroundUnavailable,
+                "the selected window does not have the app's keyboard focus; click its text control and observe again",
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Platform for MacOs {
@@ -81,8 +96,8 @@ impl Platform for MacOs {
         apps::info_at(path)
     }
 
-    fn launch(&self, app: &AppInfo) -> Result<i32> {
-        apps::launch(app)
+    fn launch(&self, app: &AppInfo, background: bool) -> Result<i32> {
+        apps::launch(app, background)
     }
 
     fn is_running(&self, pid: i32) -> bool {
@@ -185,29 +200,31 @@ impl Platform for MacOs {
         capture::capture_window(window, path, scale)
     }
 
-    fn click(&self, at: Point, button: MouseButton, count: u32) -> Result<()> {
+    fn click(&self, target: InputTarget, at: Point, button: MouseButton, count: u32) -> Result<()> {
         require_accessibility()?;
-        input::click(at, button, count)
+        input::click(target, at, button, count)
     }
 
-    fn drag(&self, from: Point, to: Point) -> Result<()> {
+    fn drag(&self, target: InputTarget, from: Point, to: Point) -> Result<()> {
         require_accessibility()?;
-        input::drag(from, to)
+        input::drag(target, from, to)
     }
 
-    fn scroll(&self, at: Point, dx: i32, dy: i32) -> Result<()> {
+    fn scroll(&self, target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()> {
         require_accessibility()?;
-        input::scroll(at, dx, dy)
+        input::scroll(target, at, dx, dy)
     }
 
-    fn press_key(&self, combo: &KeyCombo) -> Result<()> {
+    fn press_key(&self, target: InputTarget, combo: &KeyCombo) -> Result<()> {
         require_accessibility()?;
-        input::press_key(combo)
+        require_keyboard_target(target)?;
+        input::press_key(target, combo)
     }
 
-    fn type_text(&self, text: &str) -> Result<()> {
+    fn type_text(&self, target: InputTarget, text: &str) -> Result<()> {
         require_accessibility()?;
-        input::type_text(text)
+        require_keyboard_target(target)?;
+        input::type_text(target, text)
     }
 
     fn clipboard_save(&self) -> Result<Self::Clipboard> {

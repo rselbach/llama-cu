@@ -30,6 +30,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Experimental input without activating the app or moving the real pointer.
+    #[arg(long, global = true, env = "LLAMA_CU_BACKGROUND")]
+    background: bool,
+
     /// Session name. Each session keeps its own selected app and element IDs.
     #[arg(
         long,
@@ -256,7 +260,7 @@ fn main() -> ExitCode {
 fn run(cli: &Cli) -> Result<()> {
     platform::prepare_process()?;
     let store = Store::open(&cli.session)?;
-    let mut ctx = Ctx::new(platform::current(), store)?;
+    let mut ctx = Ctx::new(platform::current(), store, cli.background)?;
     let json = cli.json;
     let (mut action, observe) = match &cli.command {
         Command::ListApps { running } => return emit(json, &ctx.list_apps(*running)?),
