@@ -20,7 +20,7 @@ const HANDED_OFF: &str = "LLAMA_CU_HANDED_OFF";
 const POSIX_SPAWN_SETEXEC: i16 = 0x0040;
 
 /// `dlsym` handle that searches every loaded image.
-const RTLD_DEFAULT: *mut c_void = ptr::without_provenance_mut(-2isize as usize);
+pub(super) const RTLD_DEFAULT: *mut c_void = ptr::without_provenance_mut(-2isize as usize);
 
 /// Signature of `responsibility_spawnattrs_setdisclaim`, a private but
 /// long-stable libSystem call. With `disclaim` set, the spawned process
@@ -30,7 +30,7 @@ const RTLD_DEFAULT: *mut c_void = ptr::without_provenance_mut(-2isize as usize);
 type SetDisclaim = unsafe extern "C" fn(attr: *mut *mut c_void, disclaim: c_int) -> c_int;
 
 unsafe extern "C" {
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    pub(super) fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     fn posix_spawnattr_init(attr: *mut *mut c_void) -> c_int;
     fn posix_spawnattr_setflags(attr: *mut *mut c_void, flags: i16) -> c_int;
     fn posix_spawnattr_destroy(attr: *mut *mut c_void) -> c_int;

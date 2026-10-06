@@ -300,7 +300,7 @@ impl<P: Platform> Ctx<P> {
         let windows = self.platform.windows(pid)?;
         let target = match window {
             Some(_) => Some(pick_window(&windows, window, None, &app)?),
-            None => pick_window(&windows, None, None, &app).ok(),
+            None => pick_window(&windows, None, self.remembered_window(), &app).ok(),
         };
         let snapshot = self.platform.snapshot(
             pid,
@@ -367,7 +367,8 @@ impl<P: Platform> Ctx<P> {
     ) -> Result<Screenshot> {
         let app = self.app()?;
         let pid = pid_of(&app);
-        let target = pick_window(&self.platform.windows(pid)?, window, None, &app)?;
+        let windows = self.platform.windows(pid)?;
+        let target = pick_window(&windows, window, self.remembered_window(), &app)?;
         let path = match output {
             Some(path) => std::path::absolute(path)?,
             None => self.store.screenshot_path()?,
@@ -404,7 +405,8 @@ impl<P: Platform> Ctx<P> {
     }
 
     /// Waits for the UI to react to an action, then reads the state and a
-    /// screenshot of the app's focused window with default limits.
+    /// screenshot with default limits: of the window background input went
+    /// to, or else of the app's focused window.
     pub fn observe(&mut self) -> Observation {
         thread::sleep(OBSERVE_SETTLE);
         match self.get_ax_state_and_screenshot(None, DEFAULT_MAX_NODES, TextLimit::default(), None)
@@ -435,28 +437,21 @@ impl<P: Platform> Ctx<P> {
                     _ => None,
                 };
                 if let Some((name, verb)) = semantic.filter(|(name, _)| info.has_action(name)) {
-                    self.platform.perform_action(&element, name)?;
+                    self.platform
+                        .perform_action(&element, name, self.background)?;
                     return Ok(action(format!("{verb} [{id}] {}", describe(&info))));
                 }
-                let point = self.visible_center(&element, &info, id)?;
-                (
-                    pid,
-                    self.snapshot_window(),
-                    point,
-                    format!("[{id}] {}", describe(&info)),
-                )
+                let window = self.snapshot_window(pid)?;
+                let point = self.visible_center(&element, &info, id, window.as_ref())?;
+                (pid, window, point, format!("[{id}] {}", describe(&info)))
             }
             Target::Point(p) => {
                 let (pid, window) = self.coordinate_window()?;
-                (
-                    pid,
-                    Some(window.id),
-                    self.to_screen(&window, p),
-                    format!("{},{}", p.x, p.y),
-                )
+                let point = self.to_screen(&window, p);
+                (pid, Some(window), point, format!("{},{}", p.x, p.y))
             }
         };
-        let target = self.input_target(pid, window)?;
+        let target = self.input_target(pid, window.as_ref())?;
         self.platform.click(target, point, button, count)?;
         let clicks = match count {
             1 => String::new(),
@@ -473,7 +468,7 @@ impl<P: Platform> Ctx<P> {
     /// Drags between two window-relative points.
     pub fn drag(&mut self, from: Point, to: Point) -> Result<Action> {
         let (pid, window) = self.coordinate_window()?;
-        let target = self.input_target(pid, Some(window.id))?;
+        let target = self.input_target(pid, Some(&window))?;
         self.platform.drag(
             target,
             self.to_screen(&window, from),
@@ -495,16 +490,19 @@ impl<P: Platform> Ctx<P> {
         let (pid, window, point) = match target {
             Some(Target::Element(id)) => {
                 let (pid, element, info) = self.element(id)?;
-                let point = self.visible_center(&element, &info, id)?;
-                (pid, self.snapshot_window(), point)
+                let window = self.snapshot_window(pid)?;
+                let point = self.visible_center(&element, &info, id, window.as_ref())?;
+                (pid, window, point)
             }
             Some(Target::Point(p)) => {
                 let (pid, window) = self.coordinate_window()?;
-                (pid, Some(window.id), self.to_screen(&window, p))
+                let point = self.to_screen(&window, p);
+                (pid, Some(window), point)
             }
             None => {
                 let (pid, window) = self.coordinate_window()?;
-                (pid, Some(window.id), window.frame.center())
+                let point = window.frame.center();
+                (pid, Some(window), point)
             }
         };
         let n = i32::try_from(amount)
@@ -515,7 +513,7 @@ impl<P: Platform> Ctx<P> {
             Direction::Left => (-n, 0),
             Direction::Right => (n, 0),
         };
-        let target = self.input_target(pid, window)?;
+        let target = self.input_target(pid, window.as_ref())?;
         self.platform.scroll(target, point, dx, dy)?;
         Ok(action(
             format!("scrolled {direction:?} {amount}").to_lowercase(),
@@ -534,8 +532,7 @@ impl<P: Platform> Ctx<P> {
                 "Command shortcuts are unsupported in background mode; use accessibility actions, select-text, or set-value",
             ));
         }
-        let pid = pid_of(&self.app()?);
-        let target = self.input_target(pid, self.session.window)?;
+        let target = self.keyboard_target()?;
         for combo in &combos {
             self.platform.press_key(target, combo)?;
         }
@@ -544,8 +541,7 @@ impl<P: Platform> Ctx<P> {
 
     /// Types text into the focused control.
     pub fn type_text(&mut self, text: &str) -> Result<Action> {
-        let pid = pid_of(&self.app()?);
-        let target = self.input_target(pid, self.session.window)?;
+        let target = self.keyboard_target()?;
         self.platform.type_text(target, text)?;
         Ok(action(format!("typed {} characters", text.chars().count())))
     }
@@ -635,14 +631,9 @@ impl<P: Platform> Ctx<P> {
 
     /// Invokes a named accessibility action on an element.
     pub fn perform_secondary_action(&mut self, id: usize, name: &str) -> Result<Action> {
-        if self.background && name.eq_ignore_ascii_case("raise") {
-            return Err(Error::new(
-                ErrorCode::BackgroundUnavailable,
-                "raising a window is unavailable in background mode",
-            ));
-        }
         let (_, element, info) = self.element(id)?;
-        self.platform.perform_action(&element, name)?;
+        self.platform
+            .perform_action(&element, name, self.background)?;
         Ok(action(format!(
             "performed {name} on [{id}] {}",
             describe(&info)
@@ -682,48 +673,50 @@ impl<P: Platform> Ctx<P> {
         Ok(relaunched)
     }
 
-    /// Returns the window that window-relative coordinates refer to.
+    /// Returns the selected window, which window-relative coordinates and
+    /// background keys refer to. Background input needs exactly that window.
     fn coordinate_window(&mut self) -> Result<(i32, WindowInfo)> {
         let app = self.app()?;
         let pid = pid_of(&app);
         let windows = self.platform.windows(pid)?;
-        if self.background && self.session.window.is_none() {
-            return Err(background_window_required());
+        if self.background {
+            return Ok((pid, exact_window(windows, self.session.window)?));
         }
-        let requested = self.background.then_some(self.session.window).flatten();
-        let window = pick_window(&windows, requested, self.session.window, &app)?;
-        Ok((pid, window))
+        Ok((pid, pick_window(&windows, None, self.session.window, &app)?))
     }
 
-    /// Resolves an exact background window, or prepares foreground delivery.
-    fn input_target(&self, pid: i32, window: Option<u64>) -> Result<InputTarget> {
+    /// Returns the window reads show when no window is given. Background
+    /// input stays on the selected window, so reads do too; foreground reads
+    /// follow the app's focus.
+    fn remembered_window(&self) -> Option<u64> {
+        self.session.window.filter(|_| self.background)
+    }
+
+    /// Activates the app and window for foreground input, or addresses the
+    /// window directly for background input.
+    fn input_target(&self, pid: i32, window: Option<&WindowInfo>) -> Result<InputTarget> {
         if !self.background {
-            self.platform.activate(pid, window)?;
+            self.platform.activate(pid, window.map(|w| w.id))?;
             return Ok(InputTarget::Foreground);
         }
         let window = window.ok_or_else(background_window_required)?;
-        let info = self
-            .platform
-            .windows(pid)?
-            .into_iter()
-            .find(|w| w.id == window)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::WindowNotFound,
-                    format!("window {window} is no longer available"),
-                )
-            })?;
-        if info.minimized {
-            return Err(Error::new(
-                ErrorCode::BackgroundUnavailable,
-                "background input to minimized windows is unsupported",
-            ));
-        }
         Ok(InputTarget::Background {
             pid,
-            window,
-            frame: info.frame,
+            window: window.id,
+            frame: window.frame,
         })
+    }
+
+    /// Activates the app for foreground keys, or addresses the selected
+    /// window for background keys.
+    fn keyboard_target(&mut self) -> Result<InputTarget> {
+        if self.background {
+            let (pid, window) = self.coordinate_window()?;
+            return self.input_target(pid, Some(&window));
+        }
+        let pid = pid_of(&self.app()?);
+        self.platform.activate(pid, self.session.window)?;
+        Ok(InputTarget::Foreground)
     }
 
     /// Converts a point in screenshot pixels of `window` to the screen. The
@@ -739,8 +732,17 @@ impl<P: Platform> Ctx<P> {
         }
     }
 
-    fn snapshot_window(&self) -> Option<u64> {
-        self.session.snapshot.as_ref().and_then(|s| s.window)
+    /// Returns the window of the last snapshot, which element input goes to.
+    /// Background input needs exactly that window.
+    fn snapshot_window(&self, pid: i32) -> Result<Option<WindowInfo>> {
+        let id = self.session.snapshot.as_ref().and_then(|s| s.window);
+        if self.background {
+            return exact_window(self.platform.windows(pid)?, id).map(Some);
+        }
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        Ok(self.platform.windows(pid)?.into_iter().find(|w| w.id == id))
     }
 
     /// Finds an element from the last snapshot and checks it has not changed.
@@ -814,7 +816,13 @@ impl<P: Platform> Ctx<P> {
 
     /// Returns the screen point at the center of the element's part inside
     /// its window, scrolling it into view first when none of it is visible.
-    fn visible_center(&self, element: &P::Element, info: &NodeInfo, id: usize) -> Result<Point> {
+    fn visible_center(
+        &self,
+        element: &P::Element,
+        info: &NodeInfo,
+        id: usize,
+        window: Option<&WindowInfo>,
+    ) -> Result<Point> {
         let no_frame = || {
             Error::new(
                 ErrorCode::Unsupported,
@@ -822,14 +830,6 @@ impl<P: Platform> Ctx<P> {
             )
         };
         let frame = info.frame.filter(Rect::has_area).ok_or_else(no_frame)?;
-        let window = match (self.session.snapshot.as_ref(), self.snapshot_window()) {
-            (Some(s), Some(id)) => self
-                .platform
-                .windows(s.pid)?
-                .into_iter()
-                .find(|w| w.id == id),
-            _ => None,
-        };
         let Some(window) = window else {
             return Ok(frame.center());
         };
@@ -840,7 +840,8 @@ impl<P: Platform> Ctx<P> {
         if !info.has_action("scrollToVisible") {
             return Ok(frame.center());
         }
-        self.platform.perform_action(element, "scrollToVisible")?;
+        self.platform
+            .perform_action(element, "scrollToVisible", self.background)?;
         let frame = self
             .platform
             .element_info(element)?
@@ -950,6 +951,18 @@ fn same_app(a: &AppInfo, b: &AppInfo) -> bool {
 
 fn pid_of(app: &AppInfo) -> i32 {
     app.pid.expect("running app has a pid")
+}
+
+/// Finds the window background input goes to. It never falls back to
+/// another window.
+fn exact_window(windows: Vec<WindowInfo>, id: Option<u64>) -> Result<WindowInfo> {
+    let id = id.ok_or_else(background_window_required)?;
+    windows.into_iter().find(|w| w.id == id).ok_or_else(|| {
+        Error::new(
+            ErrorCode::WindowNotFound,
+            format!("window {id} is no longer available"),
+        )
+    })
 }
 
 fn background_window_required() -> Error {
