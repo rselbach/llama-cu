@@ -40,6 +40,20 @@ Application identity in your keychain, else ad hoc. macOS keeps the
 permissions across rebuilds only while the signing identity stays the same,
 so an ad hoc build must be granted again after every rebuild.
 
+### Install a release
+
+Each [release](https://github.com/rselbach/llama-cu/releases) has a signed
+and notarized `llama-cu-<version>-macos-arm64.zip`. Unzip it, move
+`llama-cu.app` to `~/Applications`, and link the command from a directory
+on your `PATH`, for example:
+
+```sh
+ln -sfn ~/Applications/llama-cu.app/Contents/MacOS/llama-cu ~/.local/bin/llama-cu
+```
+
+Releases are signed with the same Developer ID, so macOS keeps the
+permissions when you replace the app with a newer release.
+
 ## Usage
 
 ```sh
@@ -178,6 +192,9 @@ src/
                   hand-off to llama-cu.app
 scripts/
   build-app.sh    build and sign llama-cu.app
+  notarize-app.sh notarize, staple, and zip llama-cu.app
+assets/
+  AppIcon.png     app icon, 1024 pixels, in the macOS icon shape
 ```
 
 `platform::Platform` is the boundary. A backend provides thin primitives:
@@ -217,6 +234,38 @@ sampling the real pointer and foreground app. Keep the pointer still and
 avoid switching apps during this short check; human input also triggers
 its interference assertions. The check quits the fixture and removes its
 temporary app and session on exit.
+
+## Releases
+
+The Release workflow builds `llama-cu.app` on a macOS runner, signs it with
+the Developer ID Application certificate, notarizes it, and uploads the
+zip. It runs for pull requests that change packaging, for manual runs, and
+for version tags. A tag also publishes a GitHub release.
+
+To release, set `version` in `Cargo.toml`, merge it, then push a matching
+tag:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The workflow uses these repository secrets:
+
+| Secret | Contents |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application certificate and key, as base64 `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | Password of the `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Full identity name, such as `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID` | Apple Account that submits for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password of that account |
+| `APPLE_TEAM_ID` | Team ID of the certificate |
+
+To notarize locally, set `APPLE_ID`, `APPLE_TEAM_ID`, and
+`APPLE_APP_SPECIFIC_PASSWORD`, then run `just notarize`. It builds and signs
+the app, refuses an app that another team signed, waits for Apple, staples
+the ticket, checks it with Gatekeeper, and writes
+`target/release/llama-cu-<version>-macos-<arch>.zip`.
 
 ## Known limitations
 

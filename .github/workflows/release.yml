@@ -1,0 +1,113 @@
+name: Release
+
+# Builds llama-cu.app, signs it with the Developer ID certificate, and
+# notarizes it. Pull requests that change packaging run the same steps;
+# version tags also publish the notarized zip as a GitHub release.
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - assets/**
+      - scripts/build-app.sh
+      - scripts/notarize-app.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  app:
+    name: Build, sign, and notarize
+    # Pull requests from forks cannot read the signing secrets.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check that the tag matches Cargo.toml
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match version ${version}" >&2
+            exit 1
+          fi
+
+      - name: Import the signing certificate
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="${RUNNER_TEMP}/signing.keychain-db"
+          certificate="${RUNNER_TEMP}/certificate.p12"
+          password="$(openssl rand -base64 32)"
+          base64 --decode <<<"${MACOS_CERTIFICATE_P12_BASE64}" >"${certificate}"
+          security create-keychain -p "${password}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${password}" "${keychain}"
+          security import "${certificate}" -k "${keychain}" \
+            -P "${MACOS_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${password}" "${keychain}" >/dev/null
+          security list-keychains -d user -s "${keychain}" login.keychain-db
+          rm "${certificate}"
+
+      - name: Build and sign
+        env:
+          LLAMA_CU_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: scripts/build-app.sh
+
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: scripts/notarize-app.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: llama-cu-macos
+          path: target/release/llama-cu-*-macos-*.zip
+          if-no-files-found: error
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          keychain="${RUNNER_TEMP}/signing.keychain-db"
+          if [[ -f "${keychain}" ]]; then
+            security delete-keychain "${keychain}"
+          fi
+
+  publish:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-cu-macos
+          path: dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+            --verify-tag --generate-notes --title "llama-cu ${GITHUB_REF_NAME}"

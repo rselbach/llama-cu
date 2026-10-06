@@ -11,6 +11,8 @@ set -euo pipefail
 
 readonly BUNDLE_ID="com.rselbach.llama-cu"
 readonly APP="target/release/llama-cu.app"
+readonly ICON="assets/AppIcon.png"
+readonly ICONSET="target/release/AppIcon.iconset"
 
 # Prints the signing identity to use, or "-" for ad hoc.
 signing_identity() {
@@ -31,6 +33,21 @@ signing_identity() {
   echo "${identity}"
 }
 
+# Converts the 1024-pixel icon into the sizes macOS shows.
+write_icon() {
+  rm -rf "${ICONSET}"
+  mkdir -p "${ICONSET}" "${APP}/Contents/Resources"
+  local size
+  for size in 16 32 128 256 512; do
+    sips -z "${size}" "${size}" "${ICON}" \
+      --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "${ICON}" \
+      --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil --convert icns --output "${APP}/Contents/Resources/AppIcon.icns" \
+    "${ICONSET}"
+}
+
 write_info_plist() {
   local version="$1"
   cat >"${APP}/Contents/Info.plist" <<EOF
@@ -42,6 +59,8 @@ write_info_plist() {
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>llama-cu</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -72,6 +91,7 @@ main() {
   rm -rf "${APP}"
   mkdir -p "${APP}/Contents/MacOS"
   cp target/release/llama-cu "${APP}/Contents/MacOS/llama-cu"
+  write_icon
   write_info_plist "${version}"
 
   local identity

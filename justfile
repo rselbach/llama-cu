@@ -31,6 +31,11 @@ check:
 app:
     scripts/build-app.sh
 
+# Notarize the app and package it as a zip. Needs APPLE_ID, APPLE_TEAM_ID,
+# and APPLE_APP_SPECIFIC_PASSWORD.
+notarize: app
+    scripts/notarize-app.sh
+
 # Install llama-cu.app into ~/Applications and link the command into
 # ~/.cargo/bin. The app owns llama-cu's permissions.
 install: app
