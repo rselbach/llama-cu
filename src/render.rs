@@ -174,12 +174,23 @@ impl Render for Doctor {
             status(p.accessibility),
             status(p.screen_recording)
         );
-        if !(p.accessibility && p.screen_recording) {
-            out.push_str(
+        if p.accessibility && p.screen_recording {
+            return out;
+        }
+        match &p.app {
+            Some(app) => {
+                let _ = write!(
+                    out,
+                    "\ngrant the missing permissions to llama-cu ({}) in System Settings > \
+                     Privacy & Security; `llama-cu doctor --prompt` opens the system prompts",
+                    app.display()
+                );
+            }
+            None => out.push_str(
                 "\ngrant the missing permissions to the app that runs llama-cu (for example your terminal) \
                  in System Settings > Privacy & Security, then restart that app; \
                  `llama-cu doctor --prompt` opens the system prompts",
-            );
+            ),
         }
         out
     }

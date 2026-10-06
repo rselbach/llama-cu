@@ -254,6 +254,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<()> {
+    platform::prepare_process()?;
     let store = Store::open(&cli.session)?;
     let mut ctx = Ctx::new(platform::current(), store)?;
     let json = cli.json;

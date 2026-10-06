@@ -11,18 +11,34 @@ that Linux and Windows backends can be added without changing the commands.
 ## Install
 
 ```sh
-just install        # cargo install --path .
+just install        # build and sign llama-cu.app, install it, link the command
 just install-skill  # link skills/llama-cu into ~/.agents/skills for Pi
 ```
 
-macOS asks for two permissions, and both go to the app that runs
-`llama-cu`, usually your terminal or agent host:
+`just install` builds `llama-cu.app`, copies it to `~/Applications`, and
+links `~/.cargo/bin/llama-cu` to the command inside it. macOS asks for two
+permissions, and both go to llama-cu.app:
 
 - **Accessibility**: read the element tree, perform actions, and send input.
 - **Screen Recording**: capture windows.
 
 Run `llama-cu doctor` to check them, or `llama-cu doctor --prompt` to open
-the system prompts. Restart the host app after you grant Screen Recording.
+the system prompts.
+
+macOS normally charges permissions to the app that started a command, such
+as your terminal or agent host, and then every program that app runs gets
+the same access. To avoid that, the command re-runs itself from inside
+llama-cu.app and tells macOS that the app is responsible for itself. This
+uses `responsibility_spawnattrs_setdisclaim`, a private but long-stable
+macOS function. A binary run from outside the app, such as `cargo run` or
+`target/release/llama-cu`, still uses the permissions of the app that
+started it.
+
+`just app` builds and signs `target/release/llama-cu.app` without installing
+it. It signs with `$LLAMA_CU_SIGN_IDENTITY`, else the first Developer ID
+Application identity in your keychain, else ad hoc. macOS keeps the
+permissions across rebuilds only while the signing identity stays the same,
+so an ad hoc build must be granted again after every rebuild.
 
 ## Usage
 
@@ -110,7 +126,10 @@ src/
   text.rs         Markdown to HTML and HTML to text for paste
   platform/
     mod.rs        Platform trait
-    macos/        AX API, ScreenCaptureKit, CGEvent, NSPasteboard
+    macos/        AX API, ScreenCaptureKit, CGEvent, NSPasteboard, and the
+                  hand-off to llama-cu.app
+scripts/
+  build-app.sh    build and sign llama-cu.app
 ```
 
 `platform::Platform` is the boundary. A backend provides thin primitives:
@@ -151,8 +170,6 @@ a real app.
   might paste the restored contents instead.
 - `press-key` maps characters through the current ASCII-capable keyboard
   layout. Characters that no key produces need `type-text`.
-- Permissions belong to the host app, so every process that host starts can
-  also control the desktop.
 - Finder answers the `showMenu` action only after the menu closes, so
   `perform-secondary-action showMenu` times out there. Use
   `click --button right` instead.

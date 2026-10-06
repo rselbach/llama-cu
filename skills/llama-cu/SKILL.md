@@ -1,7 +1,7 @@
 ---
 name: llama-cu
 description: Operate desktop apps on macOS. List and launch apps, read a window's accessibility tree, take window screenshots, click, drag, scroll, press shortcuts, type, paste rich text, set control values, and select text. Use when a task needs a GUI app instead of a CLI or API.
-compatibility: macOS 14 or later. Needs the llama-cu binary on PATH, plus Accessibility and Screen Recording permission for the app that runs the agent.
+compatibility: macOS 14 or later. Needs llama-cu on PATH, plus Accessibility and Screen Recording permission for llama-cu.app, or for the app that runs the agent when llama-cu runs outside the app.
 ---
 
 # llama-cu
@@ -13,9 +13,11 @@ compact text. Add `--json` to get JSON.
 ## Setup
 
 Run `llama-cu doctor` once. If it reports a missing permission, ask the user
-to grant it in System Settings > Privacy & Security to the app that runs
-you, such as the terminal. `llama-cu doctor --prompt` opens the system
-prompts. The user must restart that app after granting Screen Recording.
+to grant it in System Settings > Privacy & Security to the app that
+`doctor` names: llama-cu.app, or the app that runs you, such as the
+terminal. `llama-cu doctor --prompt` opens the system prompts. When the
+permissions belong to the terminal, the user must restart it after granting
+Screen Recording.
 
 ## Workflow
 

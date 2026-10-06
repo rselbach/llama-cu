@@ -6,6 +6,7 @@ mod ax;
 mod capture;
 mod clipboard;
 mod input;
+mod responsibility;
 
 use std::ops::Range;
 use std::path::Path;
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 use objc2_application_services::{AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt};
 use objc2_core_foundation::{CFBoolean, CFDictionary};
 use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
+
+pub use responsibility::become_responsible;
 
 use super::{Permissions, Platform};
 use crate::error::{Error, ErrorCode, Result};
@@ -41,7 +44,7 @@ fn require_accessibility() -> Result<()> {
     }
     Err(Error::new(
         ErrorCode::PermissionDenied,
-        "accessibility permission is missing for the app that runs llama-cu; run `llama-cu doctor`",
+        "accessibility permission is missing; run `llama-cu doctor`",
     ))
 }
 
@@ -53,6 +56,7 @@ impl Platform for MacOs {
         Permissions {
             accessibility: ax::is_trusted(),
             screen_recording: CGPreflightScreenCaptureAccess(),
+            app: responsibility::bundle(),
         }
     }
 

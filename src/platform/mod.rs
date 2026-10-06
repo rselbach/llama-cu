@@ -5,7 +5,7 @@
 //! is the same everywhere lives in `commands.rs`.
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -22,12 +22,24 @@ pub fn current() -> impl Platform {
     macos::MacOs::new()
 }
 
+/// Prepares the process before any command runs. A llama-cu inside
+/// llama-cu.app re-executes itself so the app, not the terminal or agent
+/// host that started it, owns its permissions.
+#[cfg(target_os = "macos")]
+pub fn prepare_process() -> Result<()> {
+    macos::become_responsible()
+}
+
 /// Permissions the backend needs from the operating system.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Permissions {
     pub accessibility: bool,
     pub screen_recording: bool,
+    /// The app that holds the permissions, when it is llama-cu's own app
+    /// rather than the one that started llama-cu.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<PathBuf>,
 }
 
 /// Native primitives a backend provides. All points and frames use screen

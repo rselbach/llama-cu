@@ -22,9 +22,17 @@ check:
     cargo clippy --all-targets -- -D warnings
     cargo test
 
-# Install llama-cu into ~/.cargo/bin.
-install:
-    cargo install --path .
+# Build and sign target/release/llama-cu.app.
+app:
+    scripts/build-app.sh
+
+# Install llama-cu.app into ~/Applications and link the command into
+# ~/.cargo/bin. The app owns llama-cu's permissions.
+install: app
+    mkdir -p ~/Applications ~/.cargo/bin
+    rm -rf ~/Applications/llama-cu.app
+    ditto target/release/llama-cu.app ~/Applications/llama-cu.app
+    ln -sfn ~/Applications/llama-cu.app/Contents/MacOS/llama-cu ~/.cargo/bin/llama-cu
 
 # Link the agent skill into ~/.agents/skills, where Pi finds it.
 install-skill:
