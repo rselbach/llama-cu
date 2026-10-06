@@ -119,10 +119,11 @@ pub fn drag(target: InputTarget, from: Point, to: Point) -> Result<()> {
 pub fn scroll(target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()> {
     move_to(target, at)?;
     thread::sleep(HOVER_GAP);
-    // Wheel deltas count positive toward the top and left of the content,
-    // but the system flips synthetic wheel events too when natural
-    // scrolling is on.
-    let sign = if natural_scrolling() { 1 } else { -1 };
+    // Wheel deltas count positive toward the top and left of the content.
+    // With natural scrolling on, the system flips events posted at the HID
+    // tap, including synthetic ones, but not events posted to a process.
+    let flipped = matches!(target, InputTarget::Foreground) && natural_scrolling();
+    let sign = if flipped { 1 } else { -1 };
     let steps = dx.unsigned_abs().max(dy.unsigned_abs());
     for i in 0..steps {
         let vertical = if i < dy.unsigned_abs() {
@@ -157,6 +158,7 @@ pub fn scroll(target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()> {
 
 /// Presses a key combo, holding modifier keys the way a keyboard would.
 pub fn press_key(target: InputTarget, combo: &KeyCombo) -> Result<()> {
+    super::background::require_keyboard_focus(target)?;
     let (key, key_flags) = match combo.key {
         Some(key) => {
             let (code, flags) = key_code(key)?;
@@ -199,6 +201,9 @@ pub fn press_key(target: InputTarget, combo: &KeyCombo) -> Result<()> {
 /// Types text as Unicode key events. Newlines and tabs press Return and Tab.
 pub fn type_text(target: InputTarget, text: &str) -> Result<()> {
     for typed in typing_events(text) {
+        // Typing can move focus, such as Return opening a window, so check
+        // before each event rather than once.
+        super::background::require_keyboard_focus(target)?;
         match typed {
             Typed::Key(code) => tap(target, code)?,
             Typed::Text(units) => {

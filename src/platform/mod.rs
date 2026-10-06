@@ -95,7 +95,9 @@ pub trait Platform {
     /// Returns the full text value of an element.
     fn element_text(&self, element: &Self::Element) -> Result<String>;
     /// Invokes a named accessibility action, matched case-insensitively.
-    fn perform_action(&self, element: &Self::Element, action: &str) -> Result<()>;
+    /// Refuses actions that raise a window when `background` is true.
+    fn perform_action(&self, element: &Self::Element, action: &str, background: bool)
+    -> Result<()>;
     /// Replaces an element's value.
     fn set_value(&self, element: &Self::Element, value: &str) -> Result<()>;
     /// Selects `range`, given in bytes of `text`, which is the element's
@@ -113,9 +115,11 @@ pub trait Platform {
     /// Scrolls at a screen point by whole lines. Positive `dy` scrolls down
     /// and positive `dx` scrolls right.
     fn scroll(&self, target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()>;
-    /// Presses and releases a key combo.
+    /// Presses and releases a key combo. Background keys need the target
+    /// window to have the app's keyboard focus.
     fn press_key(&self, target: InputTarget, combo: &KeyCombo) -> Result<()>;
-    /// Types text into the focused control.
+    /// Types text into the focused control. Background typing stops if the
+    /// target window loses the app's keyboard focus.
     fn type_text(&self, target: InputTarget, text: &str) -> Result<()>;
 
     /// Saves the clipboard contents.

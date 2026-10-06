@@ -31,7 +31,12 @@ struct Cli {
     json: bool,
 
     /// Experimental input without activating the app or moving the real pointer.
-    #[arg(long, global = true, env = "LLAMA_CU_BACKGROUND")]
+    #[arg(
+        long,
+        global = true,
+        env = "LLAMA_CU_BACKGROUND",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     background: bool,
 
     /// Session name. Each session keeps its own selected app and element IDs.

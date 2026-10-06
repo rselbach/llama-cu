@@ -118,7 +118,8 @@ the wrong element.
 ### Experimental background input
 
 Use `--background` on each command, or set `LLAMA_CU_BACKGROUND=true` for
-the agent's environment:
+the agent's environment. An empty value, `0`, `false`, `no`, or `off`
+leaves the mode off:
 
 ```sh
 export LLAMA_CU_BACKGROUND=true
@@ -138,14 +139,25 @@ action: posting an event successfully does not prove the app handled it.
 An app can also activate itself in response to an action. In particular,
 browser/Electron content and games need further testing.
 
-- Observe the intended window first. Background keyboard events require it
-  to be the app's focused window; otherwise they fail with
-  `background_unavailable`. This is focus *within the target app*, separate
-  from which app is frontmost.
-- Pointer input is limited to the selected, non-minimized window. Menus and
-  popovers outside it, other Spaces, and simultaneous work in the same app
-  are not supported by this prototype. A missing selected window fails
-  instead of redirecting input to another window.
+- Observe the intended window first. Reading state without `--window`
+  keeps showing the selected window while it exists, including with
+  `--observe`, instead of switching to the app's focused window.
+- Background keyboard events require the selected window to be the app's
+  focused window; otherwise they fail with `background_unavailable`. This is
+  focus *within the target app*, separate from which app is frontmost.
+  Typing stops with the same error if the window loses that focus, such as
+  when Return opens a dialog. An app that reacts slowly can still receive a
+  few characters in the new window.
+- Pointer input is limited to the selected window. A missing selected window
+  fails instead of redirecting input to another window. Input to a window
+  that is minimized, belongs to a hidden app, or is on another Space fails
+  with `background_unavailable`. Menus and popovers outside the window and
+  simultaneous work in the same app are not supported by this prototype.
+- AppKit views that decline the first click, the default for custom views,
+  ignore left clicks while their app is inactive, so a coordinate click can
+  report success without effect. Buttons and right clicks worked in testing.
+  Prefer `click --element`, which uses the element's accessibility action
+  when it has one.
 - `paste` and the `raise` action fail in background mode. Use `type-text` or
   `set-value` to avoid replacing the shared clipboard. Other app actions
   such as a Copy menu action can still change the clipboard.

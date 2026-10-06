@@ -50,10 +50,13 @@ window raising, and global input posting. There is no agent cursor overlay
 yet. Always observe the result: apps can ignore background events or bring
 themselves forward in response to an action.
 
-Observe the intended window before sending input. Keyboard events require
-that window to have focus within the selected app. Pointer coordinates
-must stay inside the selected non-minimized window. Menus outside it,
-other Spaces, and simultaneous use of the same app are unsupported.
+Observe the intended window before sending input; later observations
+without `--window` keep showing it. Keyboard events require that window to
+have focus within the selected app, and typing stops if it loses focus.
+Pointer coordinates must stay inside the selected window, which must be on
+screen: not minimized, hidden, or on another Space. Menus outside it and
+simultaneous use of the same app are unsupported. Many views ignore
+background left clicks at coordinates, so prefer `click --element`.
 Browser/Electron content needs further compatibility testing. Command
 shortcuts are rejected because inactive apps can silently ignore them; use
 accessibility actions on menu items, `select-text`, or `set-value` instead.

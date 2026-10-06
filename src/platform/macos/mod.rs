@@ -49,18 +49,9 @@ fn require_accessibility() -> Result<()> {
     ))
 }
 
-/// PID-directed keys follow the app's focused window, not mouse window tags.
-fn require_keyboard_target(target: InputTarget) -> Result<()> {
-    if let InputTarget::Background { pid, window, .. } = target {
-        let focused = ax::element_attribute(&ax::application(pid), "AXFocusedWindow")?;
-        if focused.as_deref().and_then(ax::window_id) != Some(window) {
-            return Err(Error::new(
-                ErrorCode::BackgroundUnavailable,
-                "the selected window does not have the app's keyboard focus; click its text control and observe again",
-            ));
-        }
-    }
-    Ok(())
+fn require_input(target: InputTarget) -> Result<()> {
+    require_accessibility()?;
+    background::require_on_screen(target)
 }
 
 impl Platform for MacOs {
@@ -143,7 +134,7 @@ impl Platform for MacOs {
         {
             let _ = ax::set_attribute(&window, "AXMinimized", CFBoolean::new(false));
             let _ = ax::set_attribute(&window, "AXMain", CFBoolean::new(true));
-            let _ = ax::perform_action(&window, "raise");
+            let _ = ax::perform_action(&window, "raise", false);
         }
         // Let the window server finish reordering before input arrives.
         thread::sleep(Duration::from_millis(50));
@@ -178,8 +169,13 @@ impl Platform for MacOs {
         ax::text(element)
     }
 
-    fn perform_action(&self, element: &Self::Element, action: &str) -> Result<()> {
-        ax::perform_action(element, action)
+    fn perform_action(
+        &self,
+        element: &Self::Element,
+        action: &str,
+        background: bool,
+    ) -> Result<()> {
+        ax::perform_action(element, action, background)
     }
 
     fn set_value(&self, element: &Self::Element, value: &str) -> Result<()> {
@@ -201,29 +197,27 @@ impl Platform for MacOs {
     }
 
     fn click(&self, target: InputTarget, at: Point, button: MouseButton, count: u32) -> Result<()> {
-        require_accessibility()?;
+        require_input(target)?;
         input::click(target, at, button, count)
     }
 
     fn drag(&self, target: InputTarget, from: Point, to: Point) -> Result<()> {
-        require_accessibility()?;
+        require_input(target)?;
         input::drag(target, from, to)
     }
 
     fn scroll(&self, target: InputTarget, at: Point, dx: i32, dy: i32) -> Result<()> {
-        require_accessibility()?;
+        require_input(target)?;
         input::scroll(target, at, dx, dy)
     }
 
     fn press_key(&self, target: InputTarget, combo: &KeyCombo) -> Result<()> {
-        require_accessibility()?;
-        require_keyboard_target(target)?;
+        require_input(target)?;
         input::press_key(target, combo)
     }
 
     fn type_text(&self, target: InputTarget, text: &str) -> Result<()> {
-        require_accessibility()?;
-        require_keyboard_target(target)?;
+        require_input(target)?;
         input::type_text(target, text)
     }
 

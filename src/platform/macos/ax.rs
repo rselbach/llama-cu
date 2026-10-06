@@ -314,8 +314,9 @@ pub fn text(element: &AXUIElement) -> Result<String> {
 }
 
 /// Invokes an action matched case-insensitively against the element's
-/// actions, with or without the AX prefix.
-pub fn perform_action(element: &AXUIElement, wanted: &str) -> Result<()> {
+/// actions, with or without the AX prefix. In background mode, refuses the
+/// action that raises a window, however it was named.
+pub fn perform_action(element: &AXUIElement, wanted: &str, background: bool) -> Result<()> {
     let actions = action_names(element)?;
     let raw = actions
         .iter()
@@ -340,6 +341,12 @@ pub fn perform_action(element: &AXUIElement, wanted: &str) -> Result<()> {
                 ),
             )
         })?;
+    if background && raw == "AXRaise" {
+        return Err(Error::new(
+            ErrorCode::BackgroundUnavailable,
+            "raising a window is unavailable in background mode",
+        ));
+    }
     let err = unsafe { element.perform_action(&CFString::from_str(raw)) };
     match err {
         AXError::Success => Ok(()),
