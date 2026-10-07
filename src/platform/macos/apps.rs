@@ -85,6 +85,14 @@ pub fn frontmost_pid() -> Option<i32> {
         .map(|app| app.processIdentifier())
 }
 
+/// Returns the name of the frontmost process. Unlike `list`, this includes
+/// agents such as UserNotificationCenter, which shows system alerts.
+pub fn frontmost_name() -> Option<String> {
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|app| running_info(&app).name)
+}
+
 /// Launches an app and waits until it accepts accessibility requests.
 pub fn launch(app: &AppInfo, background: bool) -> Result<i32> {
     let workspace = NSWorkspace::sharedWorkspace();

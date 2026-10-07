@@ -27,6 +27,10 @@ use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Snapshot, SnapshotOpti
 
 /// How long to wait for an app to come to the front.
 const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How often to repeat the request while the app stays behind. macOS drops
+/// the request when another process, such as a system alert, holds the
+/// front, and later gives the front back to whoever had it before.
+const ACTIVATE_RETRY: Duration = Duration::from_millis(250);
 
 /// The macOS backend.
 pub struct MacOs;
@@ -114,18 +118,21 @@ impl Platform for MacOs {
                 .and_then(|v| v.downcast::<CFBoolean>().ok())
                 .is_some_and(|b| b.as_bool())
         };
-        if !is_front() {
-            ax::set_attribute(&app, "AXFrontmost", CFBoolean::new(true))?;
-            let start = Instant::now();
-            while !is_front() && start.elapsed() < ACTIVATE_TIMEOUT {
-                thread::sleep(Duration::from_millis(20));
+        let start = Instant::now();
+        let mut requested: Option<Instant> = None;
+        while !is_front() {
+            if start.elapsed() >= ACTIVATE_TIMEOUT {
+                let message = match apps::frontmost_name() {
+                    Some(name) => format!("the app did not come to the front; {name} is in front"),
+                    None => "the app did not come to the front".to_string(),
+                };
+                return Err(Error::new(ErrorCode::Timeout, message));
             }
-            if !is_front() {
-                return Err(Error::new(
-                    ErrorCode::Timeout,
-                    "the app did not come to the front",
-                ));
+            if requested.is_none_or(|at| at.elapsed() >= ACTIVATE_RETRY) {
+                ax::set_attribute(&app, "AXFrontmost", CFBoolean::new(true))?;
+                requested = Some(Instant::now());
             }
+            thread::sleep(Duration::from_millis(20));
         }
         if let Some(window) = window
             .map(|id| ax::window_element(pid, id))
