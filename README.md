@@ -11,26 +11,21 @@ that Linux and Windows backends can be added without changing the commands.
 ## Install
 
 ```sh
-just install        # build and sign llama-cu.app, install it, link the command
-just install-skill  # link skills/llama-cu into ~/.agents/skills for Pi
+brew install --cask rselbach/tap/llama-cu
+llama-cu doctor --prompt  # grant permissions to llama-cu.app
+llama-cu install-skill    # install the agent skill
 ```
 
-`just install-skill` links the checkout, so edits to the skill show up
-right away. `llama-cu install-skill` instead writes the copy built into the
-binary to `~/.agents/skills/llama-cu/SKILL.md`, where Pi and Codex look.
-Use `--dir ~/.claude/skills` for Claude Code. Run it again after upgrading
-to update the skill. It refuses to write through a link, such as one from
-`just install-skill`.
-
-`just install` builds `llama-cu.app`, copies it to `~/Applications`, and
-links `~/.cargo/bin/llama-cu` to the command inside it. macOS asks for two
+The cask installs the notarized `llama-cu.app` into `/Applications` and
+links the `llama-cu` command into Homebrew's `bin`. macOS asks for two
 permissions, and both go to llama-cu.app:
 
 - **Accessibility**: read the element tree, perform actions, and send input.
 - **Screen Recording**: capture windows.
 
 Run `llama-cu doctor` to check them, or `llama-cu doctor --prompt` to open
-the system prompts.
+the system prompts. Every release is signed with the same Developer ID, so
+macOS keeps the permissions after `brew upgrade`.
 
 macOS normally charges permissions to the app that started a command, such
 as your terminal or agent host, and then every program that app runs gets
@@ -41,26 +36,38 @@ macOS function. A binary run from outside the app, such as `cargo run` or
 `target/release/llama-cu`, still uses the permissions of the app that
 started it.
 
+`llama-cu install-skill` writes the skill built into the binary to
+`~/.agents/skills/llama-cu/SKILL.md`, where Pi and Codex look. Use
+`--dir ~/.claude/skills` for Claude Code. Run it again after upgrading to
+update the skill. It refuses to write through a link, such as one from
+`just install-skill`.
+
+Each [release](https://github.com/rselbach/llama-cu/releases) also has the
+notarized app as `llama-cu-<version>-macos-arm64.zip`. To install it without
+Homebrew, move `llama-cu.app` to `~/Applications` and link the command from
+a directory on your `PATH`:
+
+```sh
+ln -sfn ~/Applications/llama-cu.app/Contents/MacOS/llama-cu ~/.local/bin/llama-cu
+```
+
+### Install from source
+
+```sh
+just install        # build and sign llama-cu.app, install it, link the command
+just install-skill  # link skills/llama-cu into ~/.agents/skills
+```
+
+`just install` builds `llama-cu.app`, copies it to `~/Applications`, and
+links `~/.cargo/bin/llama-cu` to the command inside it. `just install-skill`
+links the checkout instead of copying the skill, so edits to the skill show
+up right away.
+
 `just app` builds and signs `target/release/llama-cu.app` without installing
 it. It signs with `$LLAMA_CU_SIGN_IDENTITY`, else the first Developer ID
 Application identity in your keychain, else ad hoc. macOS keeps the
 permissions across rebuilds only while the signing identity stays the same,
 so an ad hoc build must be granted again after every rebuild.
-
-### Install a release
-
-Each [release](https://github.com/rselbach/llama-cu/releases) has a signed
-and notarized `llama-cu-<version>-macos-arm64.zip`. Unzip it, move
-`llama-cu.app` to `~/Applications`, and link the command from a directory
-on your `PATH`, for example:
-
-```sh
-ln -sfn ~/Applications/llama-cu.app/Contents/MacOS/llama-cu ~/.local/bin/llama-cu
-llama-cu install-skill
-```
-
-Releases are signed with the same Developer ID, so macOS keeps the
-permissions when you replace the app with a newer release.
 
 ## Usage
 
