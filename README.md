@@ -15,6 +15,13 @@ just install        # build and sign llama-cu.app, install it, link the command
 just install-skill  # link skills/llama-cu into ~/.agents/skills for Pi
 ```
 
+`just install-skill` links the checkout, so edits to the skill show up
+right away. `llama-cu install-skill` instead writes the copy built into the
+binary to `~/.agents/skills/llama-cu/SKILL.md`, where Pi and Codex look.
+Use `--dir ~/.claude/skills` for Claude Code. Run it again after upgrading
+to update the skill. It refuses to write through a link, such as one from
+`just install-skill`.
+
 `just install` builds `llama-cu.app`, copies it to `~/Applications`, and
 links `~/.cargo/bin/llama-cu` to the command inside it. macOS asks for two
 permissions, and both go to llama-cu.app:
@@ -49,6 +56,7 @@ on your `PATH`, for example:
 
 ```sh
 ln -sfn ~/Applications/llama-cu.app/Contents/MacOS/llama-cu ~/.local/bin/llama-cu
+llama-cu install-skill
 ```
 
 Releases are signed with the same Developer ID, so macOS keeps the

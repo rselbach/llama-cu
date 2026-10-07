@@ -8,6 +8,7 @@ mod model;
 mod platform;
 mod render;
 mod session;
+mod skill;
 mod text;
 
 use std::io::Read;
@@ -181,6 +182,13 @@ enum Command {
         #[arg(long)]
         prompt: bool,
     },
+    /// Install the agent skill that teaches agents to use llama-cu.
+    InstallSkill {
+        /// Agent skills directory; the skill goes in its llama-cu folder.
+        /// Defaults to ~/.agents/skills, where Pi and Codex look.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -287,6 +295,7 @@ fn run(cli: &Cli) -> Result<()> {
             return emit(json, &result);
         }
         Command::Doctor { prompt } => return emit(json, &ctx.doctor(*prompt)),
+        Command::InstallSkill { dir } => return emit(json, &skill::install(dir.as_deref())?),
         Command::Click {
             target,
             button,

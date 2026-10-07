@@ -8,6 +8,7 @@ use crate::commands::{
     StateAndScreenshot, StateNode,
 };
 use crate::model::{AppInfo, Rect, WindowInfo};
+use crate::skill::InstalledSkill;
 
 /// Most characters of one text shown in the accessibility tree; `None`
 /// shows text in full. Parses from a positive number or `max`.
@@ -162,6 +163,12 @@ impl Render for Action {
                 format!("{ok}\nobserving after the action failed: {err}")
             }
         }
+    }
+}
+
+impl Render for InstalledSkill {
+    fn render(&self) -> String {
+        format!("installed the llama-cu skill at {}", self.path.display())
     }
 }
 
