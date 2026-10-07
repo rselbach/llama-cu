@@ -7,7 +7,7 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::keys::KeyCombo;
@@ -21,6 +21,21 @@ use crate::model::{
 pub enum InputTarget {
     Foreground,
     Background { pid: i32, window: u64, frame: Rect },
+}
+
+/// What the agent cursor shows once it arrives, so people can follow
+/// background input that never moves the real pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum Gesture {
+    /// Rests at the point, as for setting a value.
+    Point,
+    /// Clicks `count` times, with the right or middle button if `secondary`.
+    Click { count: u32, secondary: bool },
+    /// Presses at the point and drags to `to`, in screen points.
+    Drag { to: Point },
+    /// Scrolls; positive `dy` scrolls down and positive `dx` right.
+    Scroll { dx: i32, dy: i32 },
 }
 
 #[cfg(target_os = "macos")]
@@ -38,6 +53,13 @@ pub fn current() -> impl Platform {
 #[cfg(target_os = "macos")]
 pub fn prepare_process() -> Result<()> {
     macos::become_responsible()
+}
+
+/// Runs the helper process that draws the agent cursor. Commands start it
+/// as needed, and it exits once the cursor has been idle for a while.
+#[cfg(target_os = "macos")]
+pub fn run_cursor() -> Result<()> {
+    macos::run_cursor()
 }
 
 /// Permissions the backend needs from the operating system.
@@ -121,6 +143,9 @@ pub trait Platform {
     /// Types text into the focused control. Background typing stops if the
     /// target window loses the app's keyboard focus.
     fn type_text(&self, target: InputTarget, text: &str) -> Result<()>;
+    /// Moves the agent cursor to the screen point `at` above `window`, waits
+    /// until it arrives, then plays `gesture` while the caller sends input.
+    fn show_cursor(&self, window: u64, at: Point, gesture: Gesture) -> Result<()>;
 
     /// Saves the clipboard contents.
     fn clipboard_save(&self) -> Result<Self::Clipboard>;

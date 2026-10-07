@@ -182,6 +182,9 @@ enum Command {
         #[arg(long)]
         prompt: bool,
     },
+    /// Draw the agent cursor for background input. Commands start it.
+    #[command(hide = true)]
+    CursorHelper,
     /// Install the agent skill that teaches agents to use llama-cu.
     InstallSkill {
         /// Agent skills directory; the skill goes in its llama-cu folder.
@@ -271,6 +274,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<()> {
+    // The helper only draws, so it needs no session or permissions.
+    if let Command::CursorHelper = cli.command {
+        return platform::run_cursor();
+    }
     platform::prepare_process()?;
     let store = Store::open(&cli.session)?;
     let mut ctx = Ctx::new(platform::current(), store, cli.background)?;
@@ -295,6 +302,7 @@ fn run(cli: &Cli) -> Result<()> {
             return emit(json, &result);
         }
         Command::Doctor { prompt } => return emit(json, &ctx.doctor(*prompt)),
+        Command::CursorHelper => unreachable!("the cursor helper runs before the session loads"),
         Command::InstallSkill { dir } => return emit(json, &skill::install(dir.as_deref())?),
         Command::Click {
             target,

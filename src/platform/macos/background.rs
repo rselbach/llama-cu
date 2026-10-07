@@ -138,7 +138,8 @@ pub fn require_keyboard_focus(target: InputTarget) -> Result<()> {
     ))
 }
 
-fn is_on_screen(window: u64) -> bool {
+/// Reports whether the window is ordered in on the current Space.
+pub(super) fn is_on_screen(window: u64) -> bool {
     let Ok(id) = u32::try_from(window) else {
         return false;
     };

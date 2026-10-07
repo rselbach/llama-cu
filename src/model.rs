@@ -51,6 +51,12 @@ impl Rect {
         self.width > 0.0 && self.height > 0.0
     }
 
+    /// Reports whether `p` lies inside, counting the left and top edges but
+    /// not the right and bottom ones. Non-finite points are never inside.
+    pub fn contains(&self, p: Point) -> bool {
+        p.x >= self.x && p.y >= self.y && p.x < self.x + self.width && p.y < self.y + self.height
+    }
+
     /// Reports whether two rectangles overlap.
     pub fn intersects(&self, other: &Rect) -> bool {
         self.x < other.x + other.width

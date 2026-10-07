@@ -29,6 +29,10 @@ const TYPE_GAP: Duration = Duration::from_millis(10);
 const TYPE_CHUNK_UNITS: usize = 20;
 /// Pointer moves per drag.
 const DRAG_STEPS: u32 = 20;
+/// How long a drag takes, so the agent cursor can follow it.
+pub(super) const DRAG_DURATION: Duration = Duration::from_millis(
+    3 * HOVER_GAP.as_millis() as u64 + DRAG_STEPS as u64 * EVENT_GAP.as_millis() as u64,
+);
 
 const KEY_RETURN: CGKeyCode = 0x24;
 const KEY_TAB: CGKeyCode = 0x30;
@@ -311,12 +315,7 @@ fn mouse_event(
 /// another window in the same process accidentally.
 fn validate_point(target: InputTarget, at: Point) -> Result<()> {
     if let InputTarget::Background { frame, .. } = target
-        && (!at.x.is_finite()
-            || !at.y.is_finite()
-            || at.x < frame.x
-            || at.y < frame.y
-            || at.x >= frame.x + frame.width
-            || at.y >= frame.y + frame.height)
+        && !frame.contains(at)
     {
         return Err(Error::new(
             ErrorCode::BackgroundUnavailable,

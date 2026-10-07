@@ -6,6 +6,7 @@ mod ax;
 mod background;
 mod capture;
 mod clipboard;
+mod cursor;
 mod input;
 mod responsibility;
 
@@ -18,9 +19,10 @@ use objc2_application_services::{AXIsProcessTrustedWithOptions, kAXTrustedCheckO
 use objc2_core_foundation::{CFBoolean, CFDictionary};
 use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
 
+pub use cursor::run as run_cursor;
 pub use responsibility::become_responsible;
 
-use super::{InputTarget, Permissions, Platform};
+use super::{Gesture, InputTarget, Permissions, Platform};
 use crate::error::{Error, ErrorCode, Result};
 use crate::keys::{Key, KeyCombo, Modifiers};
 use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Snapshot, SnapshotOptions, WindowInfo};
@@ -226,6 +228,10 @@ impl Platform for MacOs {
     fn type_text(&self, target: InputTarget, text: &str) -> Result<()> {
         require_input(target)?;
         input::type_text(target, text)
+    }
+
+    fn show_cursor(&self, window: u64, at: Point, gesture: Gesture) -> Result<()> {
+        cursor::show(window, at, gesture)
     }
 
     fn clipboard_save(&self) -> Result<Self::Clipboard> {

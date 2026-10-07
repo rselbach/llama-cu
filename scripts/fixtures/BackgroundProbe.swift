@@ -128,6 +128,30 @@ final class Delegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  // Finds the llama-cu cursor window, its tip at the center and the window
+  // right below it, plus the screen bounds of every window on screen.
+  func windowList() -> ([String: Any]?, [Int: CGRect]) {
+    let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+    let windows = list as? [[String: Any]] ?? []
+    var bounds: [Int: CGRect] = [:]
+    var cursor: [String: Any]?
+    for (index, info) in windows.enumerated() {
+      guard let number = info[kCGWindowNumber as String] as? Int,
+        let dictionary = info[kCGWindowBounds as String] as? NSDictionary,
+        let frame = CGRect(dictionaryRepresentation: dictionary)
+      else { continue }
+      bounds[number] = frame
+      let owner = info[kCGWindowOwnerName as String] as? String
+      if cursor == nil, owner == "llama-cu", frame.size == CGSize(width: 64, height: 64),
+        index + 1 < windows.count
+      {
+        let below = windows[index + 1][kCGWindowNumber as String] as? Int ?? 0
+        cursor = ["tip": [frame.midX, frame.midY], "below": below]
+      }
+    }
+    return (cursor, bounds)
+  }
+
   func writeState() {
     everActive = everActive || NSApp.isActive
     guard let event = CGEvent(source: nil) else {
@@ -141,10 +165,18 @@ final class Delegate: NSObject, NSApplicationDelegate {
       "front": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
     ])
     if samples.count > 500 { samples.removeFirst(samples.count - 500) }
+    let (cursor, bounds) = windowList()
     let state: [String: Any] = [
       "pid": ProcessInfo.processInfo.processIdentifier, "everActive": everActive,
-      "hidden": NSApp.isHidden,
-      "panels": panels.map(\.state), "samples": samples,
+      "hidden": NSApp.isHidden, "cursor": cursor ?? NSNull(),
+      "panels": panels.map { panel in
+        var state = panel.state
+        if let frame = bounds[panel.window.windowNumber] {
+          state["origin"] = [frame.minX, frame.minY]
+        }
+        return state
+      },
+      "samples": samples,
     ]
     do {
       let data = try JSONSerialization.data(withJSONObject: state)

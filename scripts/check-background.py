@@ -144,6 +144,15 @@ def check(binary, root):
             assert [e["type"] for e in events] == kinds, events
             assert events[0]["point"] == [100, height - 200], events
             assert [e["pressure"] for e in events] == [1, 0], events
+        # The agent cursor shows the click, stacked right above its window.
+        origin = state_for()["origin"]
+        wait_for(
+            read,
+            lambda s: s["cursor"]
+            and s["cursor"]["below"] == first
+            and s["cursor"]["tip"] == [origin[0] + 100, origin[1] + 200],
+            "cursor at the click",
+        )
         offset = len(state_for()["events"])
         call("click", "--at", "100,200", "--count", 2)
         wait_for(read, lambda s: len(s["panels"][0]["events"]) >= offset + 4, "double click")
@@ -151,8 +160,13 @@ def check(binary, root):
 
         offset = len(state_for()["events"])
         call("drag", "--from", "100,200", "--to", "200,300")
-        wait_for(read, lambda s: len(s["panels"][0]["events"]) >= offset + 22, "drag")
-        assert [e["type"] for e in state_for()["events"][offset:]] == [1] + [6] * 20 + [2]
+        wait_for(read, lambda s: s["panels"][0]["events"][-1]["type"] == 2, "drag")
+        # AppKit merges drag events an app has not handled yet, as it does
+        # for a real mouse, so only the press, release, and path are fixed.
+        events = state_for()["events"][offset:]
+        types = [e["type"] for e in events]
+        assert types[0] == 1 and types[-1] == 2 and set(types[1:-1]) == {6}, types
+        assert events[-2]["point"] == events[-1]["point"] == [200, height - 300], events
         # A real scroll view starts at its top left, so scrolling the wrong
         # way leaves it there.
         area = next(n for n in nodes if n["role"] == "scroll area")["frame"]
@@ -198,6 +212,7 @@ def check(binary, root):
         offset = len(state_for(1)["events"])
         call("click", "--at", "100,200")
         wait_for(read, lambda s: len(s["panels"][1]["events"]) == offset + 2, "second window click")
+        wait_for(read, lambda s: s["cursor"] and s["cursor"]["below"] == second, "cursor moved")
         call("get-ax-state", "--window", first)
         call("paste", "shared clipboard", error="background_unavailable")
         for raise_name in ["raise", "AXRaise", "axraise"]:
@@ -215,6 +230,7 @@ def check(binary, root):
         # Hidden apps do not handle background events, so input fails.
         os.kill(pid, signal.SIGUSR1)
         wait_for(read, lambda s: s["hidden"], "probe hidden")
+        wait_for(read, lambda s: not s["cursor"], "cursor hidden with the app")
         call("click", "--at", "100,200", error="background_unavailable")
         call("type-text", "hidden", error="background_unavailable")
         os.kill(pid, signal.SIGUSR2)
@@ -234,8 +250,8 @@ def check(binary, root):
         print("PASS: background launch, AX/raw clicks, buttons, double/right/middle clicks,")
         print("      pressure, drag, scroll direction, Unicode typing, Shift selection,")
         print("      focus loss while typing, raise and missing/hidden/minimized-window")
-        print("      guards; standard views drop background left clicks; foreground and")
-        print("      pointer unchanged during commands.")
+        print("      guards, agent cursor placement; standard views drop background left")
+        print("      clicks; foreground and pointer unchanged during commands.")
     finally:
         if pid is None and read():
             pid = read()["pid"]

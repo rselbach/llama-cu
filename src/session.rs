@@ -153,7 +153,7 @@ impl Store {
 
 /// Directory for session state and screenshots: `LLAMA_CU_STATE_DIR`, else
 /// `$XDG_RUNTIME_DIR/llama-cu`, else the per-user temporary directory.
-fn state_dir() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("LLAMA_CU_STATE_DIR") {
         return PathBuf::from(dir);
     }

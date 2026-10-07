@@ -146,8 +146,19 @@ llama-cu type-text "Greendale Community College"
 
 This mode sends input directly to the selected process and window, without
 explicitly activating the app, raising its window, or moving the real
-pointer. It keeps accessibility actions as the first choice. There is no
-visible agent cursor overlay yet. The default foreground mode is unchanged.
+pointer. It keeps accessibility actions as the first choice. The default
+foreground mode is unchanged.
+
+So people can follow along, background mode shows an agent cursor: a blue
+arrow that moves to each click, drag, scroll, or accessibility action and
+then shows what happened, with rings for clicks, chevrons for scrolls, and a
+smaller arrow while dragging. Each command waits for the cursor to arrive,
+at most about a quarter second, before it acts. The cursor stays just above
+the window it acts on, so windows in front of that window cover it too.
+Screenshots capture only the target window, so the agent never sees the
+cursor. A helper process started by `llama-cu` draws it. The cursor fades
+after 30 seconds without input, and the helper quits after 5 minutes. If
+the cursor cannot be shown, input still goes ahead.
 
 Background delivery is experimental and app-dependent. Observe after each
 action: posting an event successfully does not prove the app handled it.

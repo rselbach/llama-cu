@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::error::{Error, ErrorCode, Result};
 use crate::keys::KeyCombo;
 use crate::model::{AppInfo, MouseButton, NodeInfo, Point, Rect, SnapshotOptions, WindowInfo};
-use crate::platform::{InputTarget, Permissions, Platform};
+use crate::platform::{Gesture, InputTarget, Permissions, Platform};
 use crate::render::TextLimit;
 use crate::session::{ElementRef, Fingerprint, Session, SnapshotRefs, Store};
 use crate::text;
@@ -437,6 +437,11 @@ impl<P: Platform> Ctx<P> {
                     _ => None,
                 };
                 if let Some((name, verb)) = semantic.filter(|(name, _)| info.has_action(name)) {
+                    let click = Gesture::Click {
+                        count,
+                        secondary: false,
+                    };
+                    self.show_cursor_on(pid, self.snapshot_window_id(), &info, click);
                     self.platform
                         .perform_action(&element, name, self.background)?;
                     return Ok(action(format!("{verb} [{id}] {}", describe(&info))));
@@ -452,6 +457,10 @@ impl<P: Platform> Ctx<P> {
             }
         };
         let target = self.input_target(pid, window.as_ref())?;
+        if let Some(window) = &window {
+            let secondary = button != MouseButton::Left;
+            self.show_cursor(window, point, Gesture::Click { count, secondary });
+        }
         self.platform.click(target, point, button, count)?;
         let clicks = match count {
             1 => String::new(),
@@ -469,11 +478,9 @@ impl<P: Platform> Ctx<P> {
     pub fn drag(&mut self, from: Point, to: Point) -> Result<Action> {
         let (pid, window) = self.coordinate_window()?;
         let target = self.input_target(pid, Some(&window))?;
-        self.platform.drag(
-            target,
-            self.to_screen(&window, from),
-            self.to_screen(&window, to),
-        )?;
+        let (start, end) = (self.to_screen(&window, from), self.to_screen(&window, to));
+        self.show_cursor(&window, start, Gesture::Drag { to: end });
+        self.platform.drag(target, start, end)?;
         Ok(action(format!(
             "dragged from {},{} to {},{}",
             from.x, from.y, to.x, to.y
@@ -514,6 +521,9 @@ impl<P: Platform> Ctx<P> {
             Direction::Right => (n, 0),
         };
         let target = self.input_target(pid, window.as_ref())?;
+        if let Some(window) = &window {
+            self.show_cursor(window, point, Gesture::Scroll { dx, dy });
+        }
         self.platform.scroll(target, point, dx, dy)?;
         Ok(action(
             format!("scrolled {direction:?} {amount}").to_lowercase(),
@@ -631,7 +641,12 @@ impl<P: Platform> Ctx<P> {
 
     /// Invokes a named accessibility action on an element.
     pub fn perform_secondary_action(&mut self, id: usize, name: &str) -> Result<Action> {
-        let (_, element, info) = self.element(id)?;
+        let (pid, element, info) = self.element(id)?;
+        let click = Gesture::Click {
+            count: 1,
+            secondary: false,
+        };
+        self.show_cursor_on(pid, self.snapshot_window_id(), &info, click);
         self.platform
             .perform_action(&element, name, self.background)?;
         Ok(action(format!(
@@ -735,7 +750,7 @@ impl<P: Platform> Ctx<P> {
     /// Returns the window of the last snapshot, which element input goes to.
     /// Background input needs exactly that window.
     fn snapshot_window(&self, pid: i32) -> Result<Option<WindowInfo>> {
-        let id = self.session.snapshot.as_ref().and_then(|s| s.window);
+        let id = self.snapshot_window_id();
         if self.background {
             return exact_window(self.platform.windows(pid)?, id).map(Some);
         }
@@ -743,6 +758,41 @@ impl<P: Platform> Ctx<P> {
             return Ok(None);
         };
         Ok(self.platform.windows(pid)?.into_iter().find(|w| w.id == id))
+    }
+
+    fn snapshot_window_id(&self) -> Option<u64> {
+        self.session.snapshot.as_ref().and_then(|s| s.window)
+    }
+
+    /// Shows the agent cursor for background input at a screen point inside
+    /// `window`. It only helps people follow along, so input goes ahead
+    /// when the cursor cannot be shown.
+    fn show_cursor(&self, window: &WindowInfo, at: Point, gesture: Gesture) {
+        if self.background && window.frame.contains(at) {
+            let _ = self.platform.show_cursor(window.id, at, gesture);
+        }
+    }
+
+    /// Shows the agent cursor on the visible part of an element that an
+    /// accessibility action is about to use, when it is in `window`.
+    fn show_cursor_on(&self, pid: i32, window: Option<u64>, info: &NodeInfo, gesture: Gesture) {
+        if !self.background {
+            return;
+        }
+        let (Some(id), Some(frame)) = (window, info.frame.filter(Rect::has_area)) else {
+            return;
+        };
+        let found = self
+            .platform
+            .windows(pid)
+            .ok()
+            .and_then(|windows| windows.into_iter().find(|w| w.id == id));
+        let Some(window) = found else {
+            return;
+        };
+        if let Some(visible) = frame.intersection(&window.frame) {
+            self.show_cursor(&window, visible.center(), gesture);
+        }
     }
 
     /// Finds an element from the last snapshot and checks it has not changed.
@@ -799,16 +849,20 @@ impl<P: Platform> Ctx<P> {
         Ok((snapshot.pid, element, info))
     }
 
+    /// Finds an element from the last snapshot, or the app's focused element,
+    /// and shows the agent cursor on it.
     fn element_or_focused(&mut self, id: Option<usize>) -> Result<(P::Element, String)> {
         match id {
             Some(id) => {
-                let (_, element, info) = self.element(id)?;
+                let (pid, element, info) = self.element(id)?;
+                self.show_cursor_on(pid, self.snapshot_window_id(), &info, Gesture::Point);
                 Ok((element, format!("[{id}] {}", describe(&info))))
             }
             None => {
                 let pid = pid_of(&self.app()?);
                 let element = self.platform.focused_element(pid)?;
                 let info = self.platform.element_info(&element)?;
+                self.show_cursor_on(pid, self.session.window, &info, Gesture::Point);
                 Ok((element, format!("focused {}", describe(&info))))
             }
         }

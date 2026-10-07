@@ -46,9 +46,10 @@ tree header says so; coordinates still match the screenshot.
 When asked to work without taking over the user's pointer, set
 `LLAMA_CU_BACKGROUND=true` for every llama-cu invocation, or pass
 `--background` on every command. This mode avoids explicit activation,
-window raising, and global input posting. There is no agent cursor overlay
-yet. Always observe the result: apps can ignore background events or bring
-themselves forward in response to an action.
+window raising, and global input posting. A blue agent cursor shows the
+user where you act; screenshots never include it. Always observe the
+result: apps can ignore background events or bring themselves forward in
+response to an action.
 
 Observe the intended window before sending input; later observations
 without `--window` keep showing it. Keyboard events require that window to
