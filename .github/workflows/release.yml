@@ -2,7 +2,8 @@ name: Release
 
 # Builds llama-cu.app, signs it with the Developer ID certificate, and
 # notarizes it. Pull requests that change packaging run the same steps;
-# version tags also publish the notarized zip as a GitHub release.
+# version tags also publish the notarized zip as a GitHub release and point
+# the Homebrew cask at it.
 on:
   push:
     tags:
@@ -99,6 +100,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           name: llama-cu-macos
@@ -111,3 +114,8 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/*.zip \
             --verify-tag --generate-notes --title "llama-cu ${GITHUB_REF_NAME}"
+
+      - name: Update the Homebrew cask
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: scripts/update-homebrew-cask.sh "${GITHUB_REF_NAME#v}" dist/*.zip

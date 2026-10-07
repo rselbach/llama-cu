@@ -220,6 +220,8 @@ src/
 scripts/
   build-app.sh    build and sign llama-cu.app
   notarize-app.sh notarize, staple, and zip llama-cu.app
+  update-homebrew-cask.sh
+                  point the Homebrew cask at a released zip
 assets/
   AppIcon.png     app icon, 1024 pixels, in the macOS icon shape
 ```
@@ -267,7 +269,8 @@ temporary app and session on exit.
 The Release workflow builds `llama-cu.app` on a macOS runner, signs it with
 the Developer ID Application certificate, notarizes it, and uploads the
 zip. It runs for pull requests that change packaging, for manual runs, and
-for version tags. A tag also publishes a GitHub release.
+for version tags. A tag also publishes a GitHub release and updates the
+`llama-cu` cask in `rselbach/homebrew-tap` to the new version and checksum.
 
 To release, set `version` in `Cargo.toml`, merge it, then push a matching
 tag:
@@ -287,6 +290,7 @@ The workflow uses these repository secrets:
 | `APPLE_ID` | Apple Account that submits for notarization |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password of that account |
 | `APPLE_TEAM_ID` | Team ID of the certificate |
+| `TAP_GITHUB_TOKEN` | GitHub token that can push to `rselbach/homebrew-tap` |
 
 To notarize locally, set `APPLE_ID`, `APPLE_TEAM_ID`, and
 `APPLE_APP_SPECIFIC_PASSWORD`, then run `just notarize`. It builds and signs
