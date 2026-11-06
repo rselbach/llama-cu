@@ -163,6 +163,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
       "time": Date().timeIntervalSince1970,
       "pointer": [event.location.x, event.location.y],
       "front": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
+      "clipboard": NSPasteboard.general.changeCount,
     ])
     if samples.count > 500 { samples.removeFirst(samples.count - 500) }
     let (cursor, bounds) = windowList()

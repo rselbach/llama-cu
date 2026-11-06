@@ -76,7 +76,7 @@ llama-cu get-app TextEdit                 # select and launch the app
 llama-cu get-ax-state-and-screenshot      # element tree plus a PNG path
 llama-cu click --element 14               # act on an element ID
 llama-cu type-text "Greendale Community College"
-llama-cu press-key cmd+s
+llama-cu press-key tab
 ```
 
 Run `llama-cu --help` or `llama-cu <command> --help` for every option. The
@@ -130,24 +130,26 @@ acting, `llama-cu` follows the path again and checks the fingerprint. If the
 element changed, the command fails with `stale_element` and does not act on
 the wrong element.
 
-### Experimental background input
+### Background input
 
-Use `--background` on each command, or set `LLAMA_CU_BACKGROUND=true` for
-the agent's environment. An empty value, `0`, `false`, `no`, or `off`
-leaves the mode off:
+Background input is the default. Agents can operate a supported app while
+the user works in another app:
 
 ```sh
-export LLAMA_CU_BACKGROUND=true
 llama-cu get-app TextEdit
 llama-cu get-ax-state-and-screenshot
 llama-cu click --element 14
 llama-cu type-text "Greendale Community College"
 ```
 
+Pass `--background` explicitly on each call to override an older
+`LLAMA_CU_BACKGROUND=false` environment.
+
 This mode sends input directly to the selected process and window, without
 explicitly activating the app, raising its window, or moving the real
-pointer. It keeps accessibility actions as the first choice. The default
-foreground mode is unchanged.
+pointer. It keeps accessibility actions as the first choice. Use a separate
+`--session` for each agent and a dedicated app instance for testing; session
+names do not isolate input within the same app.
 
 So people can follow along, background mode shows an agent cursor: a blue
 arrow that moves to each click, drag, scroll, or accessibility action and
@@ -162,12 +164,16 @@ the cursor cannot be shown, input still goes ahead.
 
 Background delivery is experimental and app-dependent. Observe after each
 action: posting an event successfully does not prove the app handled it.
-An app can also activate itself in response to an action. In particular,
-browser/Electron content and games need further testing.
+An app can also activate itself in response to an action. Native AppKit
+controls and Chromium web content have a live regression fixture; each
+application still needs its own verification, especially custom views and
+games.
 
 - Observe the intended window first. Reading state without `--window`
   keeps showing the selected window while it exists, including with
-  `--observe`, instead of switching to the app's focused window.
+  `--observe`, instead of switching to the app's focused window. If it
+  closes, observation fails too; explicitly select another `--window` or
+  use `get-app` to start again.
 - Background keyboard events require the selected window to be the app's
   focused window; otherwise they fail with `background_unavailable`. This is
   focus *within the target app*, separate from which app is frontmost.
@@ -184,6 +190,12 @@ browser/Electron content and games need further testing.
   report success without effect. Buttons and right clicks worked in testing.
   Prefer `click --element`, which uses the element's accessibility action
   when it has one.
+- Chromium/Electron drag handlers can receive mouse movement with DOM
+  `buttons=0`, even though the press and movement arrived. The live fixture
+  reproduced this in Electron 45.2.3 / Chromium 156.0.8078.80; coordinate
+  clicks, accessibility text edits, and scrolling worked. Do not assume
+  canvas dragging works because `drag` returned success. Use an exposed
+  accessibility action or a browser automation API for those controls.
 - `paste` and the `raise` action fail in background mode. Use `type-text` or
   `set-value` to avoid replacing the shared clipboard. Other app actions
   such as a Copy menu action can still change the clipboard.
@@ -191,8 +203,15 @@ browser/Electron content and games need further testing.
   while inactive. Use accessibility actions on menu items, `select-text`,
   or `set-value` instead. Plain keys and Shift combinations use the app's
   existing keyboard focus.
-- There is no automatic fallback to foreground input. To use the original
-  behavior, omit the flag and unset `LLAMA_CU_BACKGROUND`.
+- There is no automatic fallback to foreground input. Pass `--foreground`
+  on each command that may activate the app and use the real pointer or
+  clipboard. Agents should use it only when the user authorizes taking
+  over the desktop. `--background` and `--foreground` are mutually exclusive.
+
+For compatibility, `LLAMA_CU_BACKGROUND` still accepts boolean values. An
+explicit empty value, `0`, `false`, `no`, or `off` selects foreground input;
+an unset variable now selects background input. Command-line flags override
+the environment. Remove old false values from agent environments.
 
 Mouse delivery uses `CGEventPostToPid`, AppKit event construction, window
 metadata, and the private `CGEventSetWindowLocation` function. If that
@@ -268,12 +287,25 @@ capture, and input need the permissions above, so test them by hand against
 a real app.
 
 `just check-background` needs Python 3, Xcode command-line tools, and the
-same Accessibility permission as `cargo run`. It builds a temporary AppKit
-app and exercises actual input delivery while
-sampling the real pointer and foreground app. Keep the pointer still and
-avoid switching apps during this short check; human input also triggers
+same Accessibility and Screen Recording permissions as `cargo run`. It
+builds a temporary AppKit app and exercises default background input while
+sampling the real pointer, foreground app, and clipboard change count.
+Keep the pointer still and avoid switching apps during this short check;
+human input also triggers
 its interference assertions. The check quits the fixture and removes its
 temporary app and session on exit.
+
+To check Chromium web content, supply a stock Electron runtime:
+
+```sh
+python3 scripts/check-background.py --electron /path/to/Electron.app
+```
+
+The check copies the runtime into a disposable app with a separate browser
+profile. It checks accessibility button actions, text values, screenshots,
+scrolling, and reports whether that Chromium version accepts background
+coordinate clicks and drags. It does not use an existing browser profile
+or an installed Electron application's data.
 
 ## Releases
 

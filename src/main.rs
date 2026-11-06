@@ -31,14 +31,13 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Experimental input without activating the app or moving the real pointer.
-    #[arg(
-        long,
-        global = true,
-        env = "LLAMA_CU_BACKGROUND",
-        value_parser = clap::builder::FalseyValueParser::new()
-    )]
+    /// Send input without activating the app or moving the real pointer (default).
+    #[arg(long, global = true)]
     background: bool,
+
+    /// Activate the app and use the real pointer and shared clipboard.
+    #[arg(long, global = true)]
+    foreground: bool,
 
     /// Session name. Each session keeps its own selected app and element IDs.
     #[arg(
@@ -51,6 +50,20 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
+}
+
+impl Cli {
+    fn background_input(&self) -> Result<bool> {
+        match (self.background, self.foreground) {
+            (true, true) => Err(Error::new(
+                ErrorCode::InvalidArgument,
+                "--background and --foreground cannot be used together",
+            )),
+            (_, true) => Ok(false),
+            (true, false) => Ok(true),
+            (false, false) => Ok(background_default()),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -196,7 +209,7 @@ enum Command {
 
 #[derive(Args)]
 struct StateArgs {
-    /// Window ID from get-app; defaults to the focused window.
+    /// Window ID from get-app; keeps the selected window in background mode.
     #[arg(long)]
     window: Option<u64>,
     /// Maximum number of elements to list.
@@ -217,7 +230,7 @@ struct Observe {
 
 #[derive(Args)]
 struct ScreenshotArgs {
-    /// Window ID from get-app; defaults to the focused window.
+    /// Window ID from get-app; keeps the selected window in background mode.
     #[arg(long)]
     window: Option<u64>,
     /// Write the PNG here instead of a temporary file.
@@ -273,14 +286,26 @@ fn main() -> ExitCode {
     }
 }
 
+// Treat the legacy environment setting as a default so either global mode
+// flag overrides it, including when the flag follows a subcommand.
+fn background_default() -> bool {
+    std::env::var("LLAMA_CU_BACKGROUND").map_or(true, |value| {
+        !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "" | "0" | "f" | "false" | "n" | "no" | "off"
+        )
+    })
+}
+
 fn run(cli: &Cli) -> Result<()> {
+    let background = cli.background_input()?;
     // The helper only draws, so it needs no session or permissions.
     if let Command::CursorHelper = cli.command {
         return platform::run_cursor();
     }
     platform::prepare_process()?;
     let store = Store::open(&cli.session)?;
-    let mut ctx = Ctx::new(platform::current(), store, cli.background)?;
+    let mut ctx = Ctx::new(platform::current(), store, background)?;
     let json = cli.json;
     let (mut action, observe) = match &cli.command {
         Command::ListApps { running } => return emit(json, &ctx.list_apps(*running)?),
@@ -377,4 +402,28 @@ fn read_arg(arg: &str) -> Result<String> {
         .read_to_string(&mut buf)
         .map_err(|e| Error::new(ErrorCode::Io, format!("reading standard input: {e}")))?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflicting_input_modes_are_rejected() {
+        let cases = [
+            ["--background", "--foreground", "paste", "Troy"],
+            ["--foreground", "--background", "paste", "Troy"],
+            ["--foreground", "paste", "Troy", "--background"],
+            ["--background", "paste", "Troy", "--foreground"],
+            ["paste", "Troy", "--foreground", "--background"],
+        ];
+        for args in cases {
+            let cli = Cli::try_parse_from(std::iter::once("llama-cu").chain(args))
+                .expect("parse mode flags");
+            let error = cli
+                .background_input()
+                .expect_err("conflicting modes must fail before running a command");
+            assert_eq!(error.code, ErrorCode::InvalidArgument);
+        }
+    }
 }

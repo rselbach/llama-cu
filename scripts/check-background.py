@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise background input against a temporary AppKit app; leave no artifacts."""
+"""Exercise background input in disposable native and optional Chromium apps."""
 
+import argparse
 import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,10 +28,10 @@ def wait_for(read, predicate, description):
         if state and predicate(state):
             return state
         time.sleep(0.02)
-    panels = None if state is None else state["panels"]
+    panels = None if state is None else state.get("panels")
     if panels:
         panels = [dict(p, events=len(p["events"])) for p in panels]
-    raise AssertionError(f"{description}: {panels}")
+    raise AssertionError(f"{description}: {panels if panels is not None else state}")
 
 
 def stop(pid):
@@ -49,7 +51,102 @@ def stop(pid):
     raise RuntimeError(f"probe {pid} did not exit")
 
 
-def check(binary, root):
+def check_electron(runtime, root, call):
+    """Run real AX and pointer input against isolated Chromium web content."""
+    for name in ("app", "app.asar"):
+        if (runtime / "Contents/Resources" / name).exists():
+            raise ValueError("--electron needs a stock Electron.app, not a packaged application")
+    app = root / "GreendaleElectron.app"
+    shutil.copytree(runtime, app, symlinks=True)
+    plist = app / "Contents/Info.plist"
+    info = plistlib.loads(plist.read_bytes())
+    info.update({
+        "CFBundleIdentifier": f"com.rselbach.llama-cu.web-probe.{uuid.uuid4().hex}",
+        "CFBundleName": "GreendaleElectron", "CFBundleDisplayName": "GreendaleElectron",
+        "LSUIElement": True,
+    })
+    plist.write_bytes(plistlib.dumps(info))
+    resources = app / "Contents/Resources/app"
+    resources.mkdir()
+    shutil.copy(Path(__file__).parent / "fixtures/ElectronProbe.cjs", resources / "main.cjs")
+    (resources / "package.json").write_text(json.dumps({
+        "name": "greendale-probe", "version": "1.0.0", "main": "main.cjs",
+    }))
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+
+    def read():
+        path = root / "web-state.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def wait(predicate, description):
+        state = wait_for(read, predicate, description)
+        assert not state["everFocused"], "Chromium window took focus"
+        return state
+
+    process = None
+    try:
+        env = dict(os.environ)
+        env.pop("ELECTRON_RUN_AS_NODE", None)
+        with (root / "electron.log").open("w") as log:
+            process = subprocess.Popen(
+                [str(app / "Contents/MacOS" / info["CFBundleExecutable"])],
+                env=env, stdout=log, stderr=log,
+            )
+        wait(lambda s: True, "Chromium loaded")
+        details = call("get-app", app)
+        assert details["app"]["pid"] == process.pid
+        tree = call("get-ax-state")
+        button = next(n for n in tree["nodes"] if n["role"] == "button"
+                      and n.get("title") == "Enroll")
+        call("click", "--element", button["id"], "--observe")
+        wait(lambda s: s["presses"] == 1, "Chromium AX button")
+        # Observe replaced the IDs. Resolve the field again before setting it.
+        tree = call("get-ax-state")
+        field = next(n for n in tree["nodes"] if n["role"] == "text field")
+        call("set-value", "--element", field["id"], "Troy Barnes")
+        wait(lambda s: s["text"] == "Troy Barnes", "Chromium AX text")
+        capture = call("get-screenshot")
+        assert Path(capture["path"]).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+        frame = button["frame"]
+        at = f'{frame["x"] + frame["width"] / 2},{frame["y"] + frame["height"] / 2}'
+        call("click", "--at", at)
+        # Older Chromium versions drop inactive coordinate clicks. Report that
+        # limitation separately; AX button and text actions above must work.
+        time.sleep(0.3)
+        state = read()
+        assert not state["everFocused"], "Chromium coordinate click took focus"
+        clicks = "delivered" if state["presses"] == 2 else "ignored"
+        assert state["presses"] in (1, 2), state
+        drag = "unavailable (coordinate clicks ignored)"
+        if clicks == "delivered":
+            canvas = state["canvas"]
+            start = f'{canvas["x"] + 20},{canvas["y"] + 30}'
+            end = f'{canvas["x"] + 160},{canvas["y"] + 30}'
+            call("drag", "--from", start, "--to", end)
+            state = wait(lambda s: s["downs"] > 0 and s["moves"] > 0, "Chromium drag events")
+            drag = "delivered" if state["heldMoves"] > 0 else "unavailable (DOM buttons=0)"
+        call("scroll", "--at", at, "--direction", "down")
+        wait(lambda s: s["scroll"] > 0, "Chromium scroll")
+        print(f'PASS: Electron {state["versions"]["electron"]}, Chromium '
+              f'{state["versions"]["chrome"]}: AX button, AX text, screenshot, scroll; '
+              f'coordinate clicks {clicks}; foreground, pointer and clipboard unchanged.')
+        print(f'Chromium drag capability: {drag}.')
+    except Exception:
+        print((root / "electron.log").read_text(), file=sys.stderr)
+        raise
+    finally:
+        if process is not None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            subprocess.run([LSREGISTER, "-u", str(app)], check=True)
+
+
+def check(binary, root, electron=None):
     app = root / "GreendaleProbe.app"
     executable = app / "Contents/MacOS/Probe"
     executable.parent.mkdir(parents=True)
@@ -72,9 +169,9 @@ def check(binary, root):
     env = dict(
         os.environ,
         LLAMA_CU_STATE_DIR=str(root / "session"),
-        LLAMA_CU_BACKGROUND="true",
         LLAMA_CU_SESSION="probe",
     )
+    env.pop("LLAMA_CU_BACKGROUND", None)
 
     def read():
         path = root / "state.json"
@@ -94,7 +191,7 @@ def check(binary, root):
         else:
             assert result.returncode == 0, result.stderr
             body = json.loads(result.stdout)
-        if before and not args[0].startswith("get-"):
+        if before:
             finished = time.time()
             after = wait_for(
                 read, lambda s: s["samples"][-1]["time"] > finished + 0.05,
@@ -112,6 +209,9 @@ def check(binary, root):
                 args, "pointer moved", baseline["pointer"],
                 sorted({tuple(s["pointer"]) for s in samples}),
             )
+            assert all(s["clipboard"] == baseline["clipboard"] for s in samples), (
+                args, "clipboard changed",
+            )
         return body
 
     def state_for(index=0):
@@ -123,10 +223,15 @@ def check(binary, root):
         pid = details["app"]["pid"]
         initial = wait_for(read, lambda s: len(s["panels"]) == 2, "probe launched")
         assert not initial["everActive"], "background launch activated the app"
+        if electron:
+            check_electron(electron, root, call)
+            return
         first, second = [p["window"] for p in initial["panels"]]
         call("click", "--at", "100,200", error="background_unavailable")
         call("type-text", "no window", error="background_unavailable")
         tree = call("get-ax-state", "--window", first)
+        capture = call("get-screenshot")
+        assert Path(capture["path"]).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         nodes = tree["nodes"]
         field = next(n for n in nodes if n["role"] == "text field")
         button = next(n for n in nodes if n.get("title") == "Greendale")
@@ -241,8 +346,12 @@ def check(binary, root):
         # Closing the selected window must not redirect later input.
         tree = call("get-ax-state", "--window", second)
         close = next(n for n in tree["nodes"] if n["role"] == "close button")
-        call("click", "--element", close["id"])
+        closed = call("click", "--element", close["id"], "--observe")
+        assert closed["observeError"]["code"] == "window_not_found", closed
         call("click", "--at", "100,200", error="window_not_found")
+        call("get-ax-state", error="window_not_found")
+        call("get-screenshot", error="window_not_found")
+        call("type-text", "closed window", error="window_not_found")
         tree = call("get-ax-state", "--window", first)
         minimize = next(n for n in tree["nodes"] if n["role"] == "minimize button")
         call("click", "--element", minimize["id"])
@@ -251,7 +360,7 @@ def check(binary, root):
         print("      pressure, drag, scroll direction, Unicode typing, Shift selection,")
         print("      focus loss while typing, raise and missing/hidden/minimized-window")
         print("      guards, agent cursor placement; standard views drop background left")
-        print("      clicks; foreground and pointer unchanged during commands.")
+        print("      clicks; foreground, pointer and clipboard unchanged during commands.")
     finally:
         if pid is None and read():
             pid = read()["pid"]
@@ -262,9 +371,18 @@ def check(binary, root):
 
 
 def main():
-    binary = Path(sys.argv[1] if len(sys.argv) > 1 else "target/debug/llama-cu").resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", nargs="?", default="target/debug/llama-cu", type=Path)
+    parser.add_argument("--electron", type=Path, help="check Chromium instead, using a copy of this stock Electron.app")
+    args = parser.parse_args()
+    binary = args.binary.resolve()
+    doctor = subprocess.run([str(binary), "--json", "doctor"], text=True,
+                            capture_output=True, check=True)
+    permissions = json.loads(doctor.stdout)
+    if not permissions["accessibility"] or not permissions["screenRecording"]:
+        sys.exit("Accessibility and Screen Recording are required; run llama-cu doctor.")
     with tempfile.TemporaryDirectory(prefix="llama-cu-background-") as directory:
-        check(binary, Path(directory))
+        check(binary, Path(directory), args.electron.resolve() if args.electron else None)
 
 
 if __name__ == "__main__":

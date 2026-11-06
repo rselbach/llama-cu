@@ -298,9 +298,9 @@ impl<P: Platform> Ctx<P> {
         let app = self.app()?;
         let pid = pid_of(&app);
         let windows = self.platform.windows(pid)?;
-        let target = match window {
-            Some(_) => Some(pick_window(&windows, window, None, &app)?),
-            None => pick_window(&windows, None, self.remembered_window(), &app).ok(),
+        let target = match window.or(self.remembered_window()) {
+            requested @ Some(_) => Some(pick_window(&windows, requested, None, &app)?),
+            None => pick_window(&windows, None, None, &app).ok(),
         };
         let snapshot = self.platform.snapshot(
             pid,
@@ -368,7 +368,7 @@ impl<P: Platform> Ctx<P> {
         let app = self.app()?;
         let pid = pid_of(&app);
         let windows = self.platform.windows(pid)?;
-        let target = pick_window(&windows, window, self.remembered_window(), &app)?;
+        let target = pick_window(&windows, window.or(self.remembered_window()), None, &app)?;
         let path = match output {
             Some(path) => std::path::absolute(path)?,
             None => self.store.screenshot_path()?,

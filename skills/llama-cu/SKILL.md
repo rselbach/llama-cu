@@ -8,7 +8,9 @@ compatibility: macOS 14 or later. Needs llama-cu on PATH, plus Accessibility and
 
 `llama-cu` operates desktop apps through the accessibility API, window
 screenshots, and synthetic input. Each call is one shell command that prints
-compact text. Add `--json` to get JSON.
+compact text. Add `--json` to get JSON. Background input is the default;
+pass `--background` explicitly on every call to override any inherited
+legacy environment setting that enables foreground input.
 
 ## Setup
 
@@ -21,17 +23,22 @@ Screen Recording.
 
 ## Workflow
 
-1. Select the app: `llama-cu get-app Notes`. Use a name, a bundle ID, or a
-   `.app` path. If the app is not running, the command launches it. Later
+1. Choose a unique `--session` name for this task and pass it on every call.
+   Select the app: `llama-cu --background --session testing get-app Notes`.
+   Use a name, a bundle ID, or a `.app` path. If the app is not running,
+   the command launches it. Later
    commands target this app. An exact name wins over a running app with a
    similar name: `get-app Firefox` launches Firefox even if only Firefox
    Developer Edition is running. Check `llama-cu list-apps --running` when in
    doubt.
-2. Observe: `llama-cu get-ax-state-and-screenshot`. This prints the element
-   tree and writes a PNG. Open the PNG with your read tool to see it.
-3. Act on element IDs: `llama-cu click --element 12`. Add `--observe` to
-   print the new state and a screenshot after the action, instead of
-   running step 2 again.
+2. Observe:
+   `llama-cu --background --session testing get-ax-state-and-screenshot`.
+   This prints the element tree and writes a PNG. Open the PNG with your
+   read tool to see it.
+3. Act on element IDs and observe the result:
+   `llama-cu --background --session testing click --element 12 --observe`.
+   Check that the expected UI change occurred; a successful event post
+   alone does not prove the app handled the input.
 4. Observe again before the next decision. Each `get-ax-state` replaces the
    previous element IDs. A `stale_element` error means the UI changed: run
    `get-ax-state` again.
@@ -41,32 +48,40 @@ from the tree. Coordinates are window-relative screenshot pixels, the same
 as the frames in the tree. Large windows are captured scaled down, and the
 tree header says so; coordinates still match the screenshot.
 
-## Experimental background mode
+## Working alongside the user
 
-When asked to work without taking over the user's pointer, set
-`LLAMA_CU_BACKGROUND=true` for every llama-cu invocation, or pass
-`--background` on every command. This mode avoids explicit activation,
+Use background input for agent work. This mode avoids explicit activation,
 window raising, and global input posting. A blue agent cursor shows the
 user where you act; screenshots never include it. Always observe the
 result: apps can ignore background events or bring themselves forward in
 response to an action.
 
 Observe the intended window before sending input; later observations
-without `--window` keep showing it. Keyboard events require that window to
-have focus within the selected app, and typing stops if it loses focus.
+without `--window` keep showing it. If it closes, explicitly select a new
+window; observations must not redirect input to another window. Keyboard
+events require that window to have focus within the selected app, and
+typing stops if it loses focus.
 Pointer coordinates must stay inside the selected window, which must be on
 screen: not minimized, hidden, or on another Space. Menus outside it and
 simultaneous use of the same app are unsupported. Many views ignore
 background left clicks at coordinates, so prefer `click --element`.
-Browser/Electron content needs further compatibility testing. Command
-shortcuts are rejected because inactive apps can silently ignore them; use
+Native and Chromium controls have regression coverage, but each app's
+custom views may behave differently. Command shortcuts are rejected
+because inactive apps can silently ignore them; use
 accessibility actions on menu items, `select-text`, or `set-value` instead.
+Chromium/Electron canvas dragging can fail because DOM mouse movement
+reports no held button. A successful `drag` command is not proof of a
+successful drag; verify the changed control or use a browser automation
+API when available. Do not switch to foreground input to work around it.
 
 `paste` and `perform-secondary-action raise` return
 `background_unavailable`; use `type-text` or `set-value` for text.
 Background delivery never falls back to moving the real pointer. If an
-action fails or is ignored, report the limitation rather than silently
-retrying without background mode.
+action fails or is ignored, try an exposed accessibility action or report
+the limitation. Do not retry with `--foreground` unless the user has
+authorized taking over the desktop. Session names isolate stored element
+IDs, not the app's focus or documents: use a dedicated test instance and
+temporary data, and do not work in the same app instance as the user.
 
 ## Reading the tree
 
@@ -98,15 +113,15 @@ Each text shows at most 200 characters, then `... (N chars)`. Run
 |---|---|
 | `list-apps [--running]` | List installed apps and running PIDs. |
 | `get-app <app>` | Select an app; launch it if needed; list its windows. |
-| `get-ax-state [--window ID] [--max-nodes N] [--text-limit N\|max]` | Print the element tree of the focused window, or of window `ID`. |
+| `get-ax-state [--window ID] [--max-nodes N] [--text-limit N\|max]` | Print the selected window's tree, or select window `ID`. |
 | `get-screenshot [--window ID] [-o FILE]` | Capture the window as PNG. |
 | `get-ax-state-and-screenshot` | Do both for the same window. If the capture fails, the tree still prints. |
 | `click (--element ID \| --at X,Y) [--button left\|right\|middle] [--count N]` | Click. Use `--count 2` to double-click. |
 | `drag --from X,Y --to X,Y` | Drag with the left button. |
 | `scroll [--element ID \| --at X,Y] --direction up\|down\|left\|right [--amount LINES]` | Scroll. Without a target, scroll at the window center. |
-| `press-key <combo>...` | Press keys in order, such as `cmd+s` or `down down enter`. |
+| `press-key <combo>...` | Press keys in order, such as `down down enter`. Command shortcuts require foreground mode. |
 | `type-text <text\|->` | Type into the focused control. |
-| `paste [--format plain\|markdown\|html] <text\|->` | Paste through the clipboard, then restore the clipboard. |
+| `paste [--format plain\|markdown\|html] <text\|->` | Foreground only: paste through the shared clipboard, then restore it. |
 | `set-value [--element ID] <value\|->` | Replace a control's value directly. Defaults to the focused control. |
 | `select-text [--element ID] <text> [--position select\|before\|after] [--occurrence N]` | Select the match, or put the cursor before or after it. |
 | `perform-secondary-action --element ID <action>` | Run an action from the tree, such as `showMenu`, `increment`, or `raise`. |
@@ -117,14 +132,13 @@ Every command from `click` to `perform-secondary-action` accepts `--observe`.
 
 - A plain left `click --element` uses the element's press action, and a
   double-click (`--count 2`) uses its open action, so both work even when
-  the window is covered. In the default foreground mode, other clicks move
-  the real pointer and bring the app to the front first.
-- Text entry: use `type-text` for short text. Use `paste` for long text or
-  formatted text (`--format markdown` or `--format html`). Use `set-value` to
-  replace a field outright. Some apps do not notice `set-value`; if the app
-  ignores the new value, type instead.
+  the window is covered. Other clicks use process-targeted events in
+  background mode; check the result because some views ignore them.
+- Text entry: use `set-value --element ID` to replace a field, or
+  `type-text` to type into the app's focused control. Some apps do not
+  notice `set-value`; if the app ignores the new value, type instead.
 - Pass long text on standard input with `-`:
-  `llama-cu paste --format markdown - <<'EOF'` ... `EOF`.
+  `llama-cu --background --session testing type-text - <<'EOF'` ... `EOF`.
 - Key names: modifiers `cmd`, `ctrl`, `alt` or `option`, `shift`, `fn`,
   joined with `+`. Named keys: `enter`, `tab`, `space`, `backspace`,
   `delete`, `escape`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`,
@@ -134,7 +148,8 @@ Every command from `click` to `perform-secondary-action` accepts `--observe`.
   `BackSpace`, `Page_Up`, and `Next` work too. Letters ignore case, so add
   `shift` explicitly.
 - To use a menu, click the menu bar item, run `get-ax-state`, and then click
-  the menu item. A keyboard shortcut is often faster. Context menus from a
+  the menu item. Use exposed menu actions instead of Command shortcuts in
+  background mode. Context menus from a
   right-click appear in the tree the same way. Press `escape` to close a
   menu. In Finder, use `click --button right` rather than the `showMenu`
   action, which times out there.
