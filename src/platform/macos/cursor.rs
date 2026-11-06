@@ -232,7 +232,7 @@ fn is_ours(path: &Path, socket: u64) -> bool {
 
 /// Handles window server events for up to `wait`, which also lets AppKit
 /// redraw the cursor.
-fn pump(app: &NSApplication, wait: Duration) {
+pub(super) fn pump(app: &NSApplication, wait: Duration) {
     let until = NSDate::dateWithTimeIntervalSinceNow(wait.as_secs_f64());
     let mode = unsafe { NSDefaultRunLoopMode };
     if let Some(event) = app.nextEventMatchingMask_untilDate_inMode_dequeue(

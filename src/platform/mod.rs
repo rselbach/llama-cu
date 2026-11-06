@@ -62,6 +62,13 @@ pub fn run_cursor() -> Result<()> {
     macos::run_cursor()
 }
 
+/// Runs the window that lists missing permissions. `doctor --prompt` starts
+/// it in its own process.
+#[cfg(target_os = "macos")]
+pub fn run_permissions_window() -> Result<()> {
+    macos::run_permissions_window()
+}
+
 /// Permissions the backend needs from the operating system.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,8 +91,8 @@ pub trait Platform {
 
     /// Reports which required permissions are granted.
     fn permissions(&self) -> Permissions;
-    /// Asks the operating system to prompt for missing permissions.
-    fn request_permissions(&self);
+    /// Opens a window that shows missing permissions and how to grant them.
+    fn show_permissions(&self) -> Result<()>;
 
     /// Lists installed apps and running apps, with `pid` set when running.
     fn list_apps(&self) -> Result<Vec<AppInfo>>;

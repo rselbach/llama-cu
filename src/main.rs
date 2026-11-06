@@ -189,15 +189,19 @@ enum Command {
         #[command(flatten)]
         observe: Observe,
     },
-    /// Check, and optionally request, the permissions llama-cu needs.
+    /// Check the permissions llama-cu needs.
     Doctor {
-        /// Open the system permission prompts for anything missing.
+        /// Open a window that helps grant anything missing.
         #[arg(long)]
         prompt: bool,
     },
     /// Draw the agent cursor for background input. Commands start it.
     #[command(hide = true)]
     CursorHelper,
+    /// Show the window that helps grant missing permissions. `doctor --prompt`
+    /// starts it.
+    #[command(hide = true)]
+    PermissionsWindow,
     /// Install the agent skill that teaches agents to use llama-cu.
     InstallSkill {
         /// Agent skills directory; the skill goes in its llama-cu folder.
@@ -303,6 +307,9 @@ fn run(cli: &Cli) -> Result<()> {
     if let Command::CursorHelper = cli.command {
         return platform::run_cursor();
     }
+    if let Command::PermissionsWindow = cli.command {
+        return platform::run_permissions_window();
+    }
     platform::prepare_process()?;
     let store = Store::open(&cli.session)?;
     let mut ctx = Ctx::new(platform::current(), store, background)?;
@@ -326,8 +333,11 @@ fn run(cli: &Cli) -> Result<()> {
             )?;
             return emit(json, &result);
         }
-        Command::Doctor { prompt } => return emit(json, &ctx.doctor(*prompt)),
+        Command::Doctor { prompt } => return emit(json, &ctx.doctor(*prompt)?),
         Command::CursorHelper => unreachable!("the cursor helper runs before the session loads"),
+        Command::PermissionsWindow => {
+            unreachable!("the permissions window runs before the session loads")
+        }
         Command::InstallSkill { dir } => return emit(json, &skill::install(dir.as_deref())?),
         Command::Click {
             target,

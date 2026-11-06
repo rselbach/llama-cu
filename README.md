@@ -23,8 +23,9 @@ permissions, and both go to llama-cu.app:
 - **Accessibility**: read the element tree, perform actions, and send input.
 - **Screen Recording**: capture windows.
 
-Run `llama-cu doctor` to check them, or `llama-cu doctor --prompt` to open
-the system prompts. Every release is signed with the same Developer ID, so
+Run `llama-cu doctor` to check them, or `llama-cu doctor --prompt` to open a
+window that shows what is missing. Drag its icon into the Privacy & Security
+list to add llama-cu.app. Every release is signed with the same Developer ID, so
 macOS keeps the permissions after `brew upgrade`.
 
 macOS normally charges permissions to the app that started a command, such

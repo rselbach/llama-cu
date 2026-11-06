@@ -14,7 +14,8 @@ Commands print compact text; add `--json` for structured results.
 
 Run `llama-cu doctor` before the first interaction. If a permission is
 missing, ask the user to grant it to the app named in the result under
-System Settings > Privacy & Security. `doctor --prompt` opens the prompts.
+System Settings > Privacy & Security. `doctor --prompt` opens a window that
+shows what is missing and has a draggable app icon.
 Permission setup is not a reason to try another input mechanism.
 
 Choose a unique session name for the task and pass `--session NAME` on

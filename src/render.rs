@@ -189,14 +189,13 @@ impl Render for Doctor {
                 let _ = write!(
                     out,
                     "\ngrant the missing permissions to llama-cu ({}) in System Settings > \
-                     Privacy & Security; `llama-cu doctor --prompt` opens the system prompts",
+                     Privacy & Security; `llama-cu doctor --prompt` opens a window with a draggable icon",
                     app.display()
                 );
             }
             None => out.push_str(
                 "\ngrant the missing permissions to the app that runs llama-cu (for example your terminal) \
-                 in System Settings > Privacy & Security, then restart that app; \
-                 `llama-cu doctor --prompt` opens the system prompts",
+                 in System Settings > Privacy & Security, then restart that app",
             ),
         }
         out

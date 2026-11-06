@@ -212,12 +212,12 @@ impl<P: Platform> Ctx<P> {
     }
 
     /// Reports permission status, prompting for missing permissions if asked.
-    pub fn doctor(&self, prompt: bool) -> Doctor {
+    pub fn doctor(&self, prompt: bool) -> Result<Doctor> {
         let permissions = self.platform.permissions();
         if prompt && !(permissions.accessibility && permissions.screen_recording) {
-            self.platform.request_permissions();
+            self.platform.show_permissions()?;
         }
-        Doctor { permissions }
+        Ok(Doctor { permissions })
     }
 
     /// Lists installed and running apps.

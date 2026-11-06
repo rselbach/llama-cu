@@ -8,6 +8,7 @@ mod capture;
 mod clipboard;
 mod cursor;
 mod input;
+mod permissions_window;
 mod responsibility;
 
 use std::ops::Range;
@@ -15,11 +16,11 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use objc2_application_services::{AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt};
-use objc2_core_foundation::{CFBoolean, CFDictionary};
-use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
+use objc2_core_foundation::CFBoolean;
+use objc2_core_graphics::CGPreflightScreenCaptureAccess;
 
 pub use cursor::run as run_cursor;
+pub use permissions_window::run as run_permissions_window;
 pub use responsibility::become_responsible;
 
 use super::{Gesture, InputTarget, Permissions, Platform};
@@ -72,17 +73,8 @@ impl Platform for MacOs {
         }
     }
 
-    fn request_permissions(&self) {
-        if !ax::is_trusted() {
-            let options = CFDictionary::from_slices(
-                &[unsafe { kAXTrustedCheckOptionPrompt }],
-                &[CFBoolean::new(true)],
-            );
-            unsafe { AXIsProcessTrustedWithOptions(Some(options.as_opaque())) };
-        }
-        if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess();
-        }
+    fn show_permissions(&self) -> Result<()> {
+        permissions_window::show()
     }
 
     fn list_apps(&self) -> Result<Vec<AppInfo>> {
