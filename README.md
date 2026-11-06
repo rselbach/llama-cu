@@ -36,8 +36,8 @@ macOS function. A binary run from outside the app, such as `cargo run` or
 `target/release/llama-cu`, still uses the permissions of the app that
 started it.
 
-`llama-cu install-skill` writes the skill built into the binary to
-`~/.agents/skills/llama-cu/SKILL.md`, where Pi and Codex look. Use
+`llama-cu install-skill` installs the bundled skill and supporting references
+under `~/.agents/skills/llama-cu/`, where Pi and Codex look. Use
 `--dir ~/.claude/skills` for Claude Code. Run it again after upgrading to
 update the skill. It refuses to write through a link, such as one from
 `just install-skill`.

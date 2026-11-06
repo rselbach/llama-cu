@@ -8,7 +8,17 @@ use serde::Serialize;
 
 use crate::error::{Error, ErrorCode, Result};
 
-const SKILL: &str = include_str!("../skills/llama-cu/SKILL.md");
+const FILES: &[(&str, &str)] = &[
+    ("SKILL.md", include_str!("../skills/llama-cu/SKILL.md")),
+    (
+        "references/commands.md",
+        include_str!("../skills/llama-cu/references/commands.md"),
+    ),
+    (
+        "references/app-notes.md",
+        include_str!("../skills/llama-cu/references/app-notes.md"),
+    ),
+];
 
 /// Result of `install-skill`.
 #[derive(Serialize)]
@@ -16,7 +26,7 @@ pub struct InstalledSkill {
     pub path: PathBuf,
 }
 
-/// Writes the skill to `<dir>/llama-cu/SKILL.md`, replacing an older copy.
+/// Writes the skill and its references to `<dir>/llama-cu`, replacing older copies.
 /// `dir` defaults to `~/.agents/skills`, where Pi and Codex look.
 pub fn install(dir: Option<&Path>) -> Result<InstalledSkill> {
     let dir = match dir {
@@ -24,21 +34,36 @@ pub fn install(dir: Option<&Path>) -> Result<InstalledSkill> {
         None => default_dir()?,
     };
     let skill_dir = dir.join("llama-cu");
+    let references_dir = skill_dir.join("references");
     // `just install-skill` links a checkout here; writing through the link
-    // would overwrite the checkout's copy.
-    if fs::symlink_metadata(&skill_dir).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(Error::new(
+    // would overwrite the checkout's copy. Check every destination before
+    // writing so a linked reference cannot leave a partially updated skill.
+    refuse_symlink(&skill_dir)?;
+    refuse_symlink(&references_dir)?;
+    for (relative, _) in FILES {
+        refuse_symlink(&skill_dir.join(relative))?;
+    }
+    fs::create_dir_all(&references_dir)?;
+    for (relative, content) in FILES {
+        fs::write(skill_dir.join(relative), content)?;
+    }
+    let path = skill_dir.join("SKILL.md");
+    Ok(InstalledSkill { path })
+}
+
+fn refuse_symlink(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(Error::new(
             ErrorCode::InvalidArgument,
             format!(
                 "{} is a symbolic link; remove it to install a copy",
-                skill_dir.display()
+                path.display()
             ),
-        ));
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
     }
-    fs::create_dir_all(&skill_dir)?;
-    let path = skill_dir.join("SKILL.md");
-    fs::write(&path, SKILL)?;
-    Ok(InstalledSkill { path })
 }
 
 fn default_dir() -> Result<PathBuf> {
@@ -75,12 +100,63 @@ mod tests {
         let want = dir.join("llama-cu/SKILL.md");
         let installed = install(Some(&dir)).expect("install");
         assert_eq!(installed.path, want);
-        assert_eq!(fs::read_to_string(&want).expect("read"), SKILL);
+        for (relative, content) in FILES {
+            let path = dir.join("llama-cu").join(relative);
+            assert_eq!(fs::read_to_string(&path).expect("read"), *content);
+            fs::write(&path, "Greendale Community College").expect("write old copy");
+        }
 
-        fs::write(&want, "Greendale Community College").expect("write old copy");
         install(Some(&dir)).expect("reinstall");
-        assert_eq!(fs::read_to_string(&want).expect("read"), SKILL);
+        for (relative, content) in FILES {
+            let path = dir.join("llama-cu").join(relative);
+            assert_eq!(fs::read_to_string(path).expect("read"), *content);
+        }
         fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_linked_files_and_references_before_writing() {
+        let cases = [
+            ("entrypoint", "SKILL.md", false),
+            ("reference-dir", "references", true),
+            ("reference-file", "references/commands.md", false),
+        ];
+        for (name, relative, directory) in cases {
+            let dir = scratch(name);
+            let skill_dir = dir.join("llama-cu");
+            let link = skill_dir.join(relative);
+            fs::create_dir_all(link.parent().expect("link parent")).expect("create parent");
+            let target = dir.join("checkout");
+            let source = if directory {
+                fs::create_dir(&target).expect("create checkout");
+                target.join("commands.md")
+            } else {
+                target.clone()
+            };
+            fs::write(&source, "Troy Barnes").expect("write checkout content");
+            std::os::unix::fs::symlink(&target, &link).expect("link");
+            let entrypoint = skill_dir.join("SKILL.md");
+            if relative != "SKILL.md" {
+                fs::write(&entrypoint, "Greendale").expect("write installed entrypoint");
+            }
+
+            let err = install(Some(&dir))
+                .err()
+                .expect("linked resource must fail");
+            assert_eq!(err.code, ErrorCode::InvalidArgument, "{name}");
+            assert_eq!(
+                fs::read_to_string(source).expect("read checkout"),
+                "Troy Barnes"
+            );
+            if relative != "SKILL.md" {
+                assert_eq!(
+                    fs::read_to_string(entrypoint).expect("read entrypoint"),
+                    "Greendale"
+                );
+            }
+            fs::remove_dir_all(dir).expect("clean up");
+        }
     }
 
     #[cfg(unix)]
