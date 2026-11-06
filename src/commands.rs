@@ -318,13 +318,9 @@ impl<P: Platform> Ctx<P> {
                 fingerprint: Fingerprint::of(&n.info, origin),
             })
             .collect();
-        self.session.window = target.as_ref().map(|w| w.id);
+        self.session.focus_window(target.as_ref().map(|w| w.id));
         self.session.scale = Some(scale);
-        self.session.snapshot = Some(SnapshotRefs {
-            pid,
-            window: self.session.window,
-            elements,
-        });
+        self.session.snapshot = Some(SnapshotRefs { pid, elements });
         self.store.save(&self.session)?;
 
         let nodes = snapshot
@@ -375,7 +371,7 @@ impl<P: Platform> Ctx<P> {
         };
         let scale = screenshot_scale(&target.frame);
         let (width, height) = self.platform.capture_window(pid, target.id, &path, scale)?;
-        self.session.window = Some(target.id);
+        self.session.focus_window(Some(target.id));
         self.session.scale = Some(scale);
         self.store.save(&self.session)?;
         Ok(Screenshot {
@@ -761,7 +757,7 @@ impl<P: Platform> Ctx<P> {
     }
 
     fn snapshot_window_id(&self) -> Option<u64> {
-        self.session.snapshot.as_ref().and_then(|s| s.window)
+        self.session.snapshot.as_ref().and(self.session.window)
     }
 
     /// Shows the agent cursor for background input at a screen point inside
@@ -834,7 +830,7 @@ impl<P: Platform> Ctx<P> {
             .resolve(snapshot.pid, &entry.path)
             .map_err(|_| stale())?;
         let info = self.platform.element_info(&element)?;
-        let origin = match (entry.fingerprint.frame, snapshot.window) {
+        let origin = match (entry.fingerprint.frame, self.session.window) {
             (Some(_), Some(window)) => self
                 .platform
                 .windows(snapshot.pid)?

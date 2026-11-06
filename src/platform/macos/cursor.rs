@@ -246,6 +246,7 @@ pub(super) fn pump(app: &NSApplication, wait: Duration) {
 }
 
 /// A move of the cursor tip along a gentle curve.
+#[derive(Clone, Copy)]
 struct Motion {
     from: Point,
     control: Point,
@@ -295,6 +296,7 @@ impl Motion {
 }
 
 /// An animation the cursor plays where it stands.
+#[derive(Clone, Copy)]
 enum Effect {
     Ripples {
         started: Instant,
@@ -306,6 +308,36 @@ enum Effect {
         dx: i32,
         dy: i32,
     },
+}
+
+impl Effect {
+    /// Reports whether the cue has played out by `now`.
+    fn done(self, now: Instant) -> bool {
+        match self {
+            Self::Ripples { started, count, .. } => {
+                now >= started + RIPPLE_GAP * (count - 1) + RIPPLE
+            }
+            Self::Scroll { started, .. } => progress(started, SCROLL_CUE, now) >= 1.0,
+        }
+    }
+}
+
+/// Where the cursor is. A hidden cursor has no tip, so it cannot be moving
+/// or showing anything.
+#[derive(Clone, Copy)]
+enum Show {
+    Hidden,
+    At { tip: Point, what: Doing },
+}
+
+/// What a shown cursor is doing. One at a time: a glide ends before its
+/// gesture starts, and a fade starts only once the cursor is at rest.
+#[derive(Clone, Copy)]
+enum Doing {
+    Rest,
+    Glide(Motion),
+    Play(Effect),
+    Fade(Instant),
 }
 
 /// One frame's appearance, compared to skip redrawing an unchanged image.
@@ -327,14 +359,10 @@ struct Cursor {
     view: Retained<NSImageView>,
     /// The window the cursor stays just above.
     window: u64,
-    /// The tip in screen points, or `None` while hidden.
-    tip: Option<Point>,
-    motion: Option<Motion>,
-    effect: Option<Effect>,
+    show: Show,
     /// The command waiting for the cursor to arrive.
     waiting: Option<UnixStream>,
     last_used: Instant,
-    fading: Option<Instant>,
     drawn: Look,
 }
 
@@ -372,12 +400,9 @@ impl Cursor {
             panel,
             view,
             window: 0,
-            tip: None,
-            motion: None,
-            effect: None,
+            show: Show::Hidden,
             waiting: None,
             last_used: Instant::now(),
-            fading: None,
             drawn,
         }
     }
@@ -393,67 +418,73 @@ impl Cursor {
             return;
         }
         self.window = request.window;
-        self.fading = None;
         self.panel.setAlphaValue(1.0);
-        self.effect = None;
-        match self.tip {
-            Some(from) if distance(from, request.at) >= 1.0 => {
+        match self.show {
+            Show::At { tip: from, .. } if distance(from, request.at) >= 1.0 => {
                 let duration = move_duration(from, request.at);
-                self.motion = Some(Motion::new(
-                    from,
-                    request.at,
-                    now,
-                    duration,
-                    Some(request.gesture),
-                ));
+                let motion = Motion::new(from, request.at, now, duration, Some(request.gesture));
+                self.show = Show::At {
+                    tip: from,
+                    what: Doing::Glide(motion),
+                };
             }
             // A hidden cursor appears where it is needed instead of flying in.
-            _ => {
-                self.motion = None;
-                self.place(request.at);
-                self.arrive(request.gesture, now);
-            }
+            _ => self.arrive(request.at, request.gesture, now),
         }
         self.restack();
     }
 
-    /// Answers the waiting command and starts what the gesture shows.
-    fn arrive(&mut self, gesture: Gesture, now: Instant) {
+    /// Answers the waiting command and starts what the gesture shows, with
+    /// the cursor at `tip`.
+    fn arrive(&mut self, tip: Point, gesture: Gesture, now: Instant) {
         self.reply();
-        self.effect = match gesture {
-            Gesture::Point => None,
-            Gesture::Click { count, secondary } => Some(Effect::Ripples {
+        self.place(tip);
+        let what = match gesture {
+            Gesture::Point => Doing::Rest,
+            Gesture::Click { count, secondary } => Doing::Play(Effect::Ripples {
                 started: now,
                 count: count.max(1),
                 secondary,
             }),
-            Gesture::Scroll { dx, dy } => Some(Effect::Scroll {
+            Gesture::Scroll { dx, dy } => Doing::Play(Effect::Scroll {
                 started: now,
                 dx,
                 dy,
             }),
-            Gesture::Drag { to } => {
-                let from = self.tip.unwrap_or(to);
-                self.motion = Some(Motion::new(from, to, now, DRAG_DURATION, None));
-                None
-            }
+            Gesture::Drag { to } => Doing::Glide(Motion::new(tip, to, now, DRAG_DURATION, None)),
         };
+        self.show = Show::At { tip, what };
     }
 
     fn tick(&mut self, now: Instant) {
-        if let Some(motion) = &self.motion {
+        if let Show::At {
+            what: Doing::Glide(motion),
+            ..
+        } = self.show
+        {
             let t = motion.progress(now);
             let tip = motion.at(t);
-            let then = motion.then;
             self.place(tip);
-            if t >= 1.0 {
-                self.motion = None;
-                if let Some(gesture) = then {
-                    self.arrive(gesture, now);
-                }
+            if t < 1.0 {
+                self.show = Show::At {
+                    tip,
+                    what: Doing::Glide(motion),
+                };
+            } else if let Some(gesture) = motion.then {
+                self.arrive(tip, gesture, now);
+            } else {
+                self.show = Show::At {
+                    tip,
+                    what: Doing::Rest,
+                };
             }
         }
-        if let Some(started) = self.fading {
+        self.end_effect(now);
+        if let Show::At {
+            what: Doing::Fade(started),
+            ..
+        } = self.show
+        {
             let t = progress(started, FADE, now);
             self.panel.setAlphaValue(1.0 - t);
             if t >= 1.0 {
@@ -467,19 +498,39 @@ impl Cursor {
         }
     }
 
+    /// Returns a click or scroll cue to rest once it has played out.
+    fn end_effect(&mut self, now: Instant) {
+        let Show::At {
+            tip,
+            what: Doing::Play(effect),
+        } = self.show
+        else {
+            return;
+        };
+        if effect.done(now) {
+            self.show = Show::At {
+                tip,
+                what: Doing::Rest,
+            };
+        }
+    }
+
     /// Restacks the cursor above its window, hides it when that window is
     /// gone or off screen, and starts fading it once idle.
     fn upkeep(&mut self, now: Instant) {
-        if self.tip.is_none() {
+        let Show::At { tip, what } = self.show else {
             return;
-        }
+        };
         if !background::is_on_screen(self.window) {
             self.hide();
             return;
         }
         self.restack();
-        if self.fading.is_none() && !self.is_animating() && self.idle_for(now) >= HIDE_AFTER {
-            self.fading = Some(now);
+        if matches!(what, Doing::Rest) && self.idle_for(now) >= HIDE_AFTER {
+            self.show = Show::At {
+                tip,
+                what: Doing::Fade(now),
+            };
         }
     }
 
@@ -491,17 +542,25 @@ impl Cursor {
     }
 
     fn is_animating(&self) -> bool {
-        self.motion.is_some() || self.effect.is_some() || self.fading.is_some()
+        matches!(
+            self.show,
+            Show::At {
+                what: Doing::Glide(_) | Doing::Play(_) | Doing::Fade(_),
+                ..
+            }
+        )
     }
 
-    fn look(&mut self, now: Instant) -> Look {
-        let pressed = self.motion.as_ref().is_some_and(|m| m.then.is_none());
+    fn look(&self, now: Instant) -> Look {
+        let Show::At { what, .. } = self.show else {
+            return Look::default();
+        };
         let mut look = Look {
-            pressed,
+            pressed: matches!(what, Doing::Glide(motion) if motion.then.is_none()),
             ..Look::default()
         };
-        match self.effect {
-            Some(Effect::Ripples {
+        match what {
+            Doing::Play(Effect::Ripples {
                 started,
                 count,
                 secondary,
@@ -518,27 +577,18 @@ impl Cursor {
                         look.rings.push((4.0 + 18.0 * grown, 0.75 * (1.0 - t)));
                     }
                 }
-                let last = started + RIPPLE_GAP * (count - 1) + RIPPLE;
-                if now >= last {
-                    self.effect = None;
-                }
             }
-            Some(Effect::Scroll { started, dx, dy }) => {
+            Doing::Play(Effect::Scroll { started, dx, dy }) => {
                 let t = progress(started, SCROLL_CUE, now);
                 let angle = f64::from(dy.signum()).atan2(f64::from(dx.signum()));
                 look.chevrons = Some((angle, 8.0 * t, 0.9 * (1.0 - t)));
-                if t >= 1.0 {
-                    self.effect = None;
-                    look.chevrons = None;
-                }
             }
-            None => {}
+            Doing::Rest | Doing::Glide(_) | Doing::Fade(_) => {}
         }
         look
     }
 
     fn place(&mut self, tip: Point) {
-        self.tip = Some(tip);
         let screens = NSScreen::screens(self.mtm);
         let Some(primary) = screens.firstObject() else {
             return;
@@ -558,10 +608,7 @@ impl Cursor {
     fn hide(&mut self) {
         self.reply();
         self.panel.orderOut(None);
-        self.tip = None;
-        self.motion = None;
-        self.effect = None;
-        self.fading = None;
+        self.show = Show::Hidden;
     }
 
     fn reply(&mut self) {

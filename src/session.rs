@@ -17,8 +17,19 @@ pub struct Session {
     pub window: Option<u64>,
     /// Screenshot pixels per point for `window`; coordinates are in pixels.
     pub scale: Option<f64>,
-    /// Element IDs from the last `get-ax-state`.
+    /// Element IDs from the last `get-ax-state` of `window`.
     pub snapshot: Option<SnapshotRefs>,
+}
+
+impl Session {
+    /// Makes `window` the one reads and input refer to. Element IDs captured
+    /// from another window no longer apply, so they are dropped.
+    pub fn focus_window(&mut self, window: Option<u64>) {
+        if self.window != window {
+            self.snapshot = None;
+        }
+        self.window = window;
+    }
 }
 
 /// Element references captured by the last snapshot. Element ID `n` is
@@ -27,7 +38,6 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotRefs {
     pub pid: i32,
-    pub window: Option<u64>,
     pub elements: Vec<ElementRef>,
 }
 
@@ -234,5 +244,22 @@ mod tests {
             let fp = Fingerprint::of(&info(title, frame), Some(origin));
             assert_eq!(fp.matches(&current, Some(current_origin)), want, "{name}");
         }
+    }
+
+    #[test]
+    fn element_ids_follow_their_window() {
+        let mut session = Session {
+            window: Some(1),
+            snapshot: Some(SnapshotRefs {
+                pid: 9,
+                elements: Vec::new(),
+            }),
+            ..Session::default()
+        };
+        session.focus_window(Some(1));
+        assert!(session.snapshot.is_some(), "same window keeps its IDs");
+        session.focus_window(Some(2));
+        assert!(session.snapshot.is_none(), "another window drops its IDs");
+        assert_eq!(session.window, Some(2));
     }
 }
